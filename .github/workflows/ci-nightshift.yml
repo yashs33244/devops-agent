@@ -10,6 +10,7 @@ on:
     paths:
       - "agents/nightshift/**"
       - ".github/workflows/ci-nightshift.yml"
+  workflow_dispatch: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

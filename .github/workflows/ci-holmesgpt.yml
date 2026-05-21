@@ -10,6 +10,7 @@ on:
     paths:
       - "agents/holmesgpt/**"
       - ".github/workflows/ci-holmesgpt.yml"
+  workflow_dispatch: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

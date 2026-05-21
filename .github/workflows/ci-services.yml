@@ -10,6 +10,7 @@ on:
     paths:
       - "services/**"
       - ".github/workflows/ci-services.yml"
+  workflow_dispatch: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
