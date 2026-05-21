@@ -1,0 +1,38 @@
+services:
+  firestore:
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
+    command: gcloud emulators firestore start --host-port=0.0.0.0:8080
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
+    command: gcloud emulators pubsub start --host-port=0.0.0.0:8085 --project=local-test
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8085"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  bigtable:
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
+    command: gcloud emulators bigtable start --host-port=0.0.0.0:8086
+    ports:
+      - "8086:8086"
+    profiles:
+      - bigtable
+
+  spanner:
+    image: gcr.io/cloud-spanner-emulator/emulator:1.5.21
+    ports:
+      - "9010:9010"
+      - "9020:9020"
+    profiles:
+      - spanner

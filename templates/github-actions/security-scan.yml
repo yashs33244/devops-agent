@@ -1,0 +1,224 @@
+---
+# Scheduled security scanning: Trivy (FS + image), Checkov, hadolint
+# Runs nightly and on every push to main / PRs touching security-relevant paths
+# Template variables: {{REGISTRY}}, {{IMAGE_NAME}}
+name: Security Scan
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 02:00 UTC nightly
+  push:
+    branches:
+      - main
+    paths:
+      - "Dockerfile"
+      - "**/*.dockerfile"
+      - "terraform/**"
+      - ".github/workflows/**"
+      - "**/requirements*.txt"
+      - "**/package-lock.json"
+      - "**/go.sum"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "terraform/**"
+  workflow_dispatch: {}
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Trivy filesystem scan ──────────────────────────────────────────────────
+  trivy-fs:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Run Trivy filesystem scan (SARIF)
+        uses: aquasecurity/trivy-action@18f2505d82c4d5ad3de67cefab9de8e87a5a1f7b  # v0.29.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-fs.sarif"
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+
+      - name: Upload Trivy FS results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@dd746615b3b9d728a6a37ca2045b68ca76d4841f  # v3.27.9
+        with:
+          sarif_file: "trivy-fs.sarif"
+          category: "trivy-fs"
+
+      - name: Run Trivy filesystem scan (table — job log)
+        uses: aquasecurity/trivy-action@18f2505d82c4d5ad3de67cefab9de8e87a5a1f7b  # v0.29.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "table"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+
+  # ── Trivy image scan ───────────────────────────────────────────────────────
+  trivy-image:
+    name: Trivy Image Scan
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write       # needed if pulling from a private registry via OIDC
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
+
+      - name: Build image locally for scanning (no push)
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75  # v6.9.0
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: scan-target:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy image scan (SARIF)
+        uses: aquasecurity/trivy-action@18f2505d82c4d5ad3de67cefab9de8e87a5a1f7b  # v0.29.0
+        with:
+          scan-type: "image"
+          image-ref: "scan-target:${{ github.sha }}"
+          format: "sarif"
+          output: "trivy-image.sarif"
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+
+      - name: Upload Trivy image results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@dd746615b3b9d728a6a37ca2045b68ca76d4841f  # v3.27.9
+        with:
+          sarif_file: "trivy-image.sarif"
+          category: "trivy-image"
+
+      - name: Run Trivy image scan (table — fail on CRITICAL)
+        uses: aquasecurity/trivy-action@18f2505d82c4d5ad3de67cefab9de8e87a5a1f7b  # v0.29.0
+        with:
+          scan-type: "image"
+          image-ref: "scan-target:${{ github.sha }}"
+          format: "table"
+          severity: "CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+
+  # ── Checkov (IaC / Terraform) ──────────────────────────────────────────────
+  checkov:
+    name: Checkov IaC Scan
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Run Checkov on Terraform directory
+        uses: bridgecrewio/checkov-action@3cd58a1e1b3697a4d8ff8c06ccf87e6cd5d6fc15  # v12.2917.0
+        with:
+          directory: terraform
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov.sarif
+          soft_fail: false
+          skip_check: "CKV_GIT_1"   # skip: ensure private GitHub repo (not applicable)
+          compact: true
+
+      - name: Upload Checkov SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@dd746615b3b9d728a6a37ca2045b68ca76d4841f  # v3.27.9
+        with:
+          sarif_file: "checkov.sarif"
+          category: "checkov"
+
+      - name: Run Checkov on Kubernetes / Helm manifests
+        if: hashFiles('helm/**') != ''
+        uses: bridgecrewio/checkov-action@3cd58a1e1b3697a4d8ff8c06ccf87e6cd5d6fc15  # v12.2917.0
+        with:
+          directory: helm
+          framework: helm
+          output_format: cli
+          soft_fail: true     # informational only for Helm
+          compact: true
+
+  # ── hadolint (Dockerfile linting) ─────────────────────────────────────────
+  hadolint:
+    name: hadolint Dockerfile Lint
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Run hadolint (SARIF)
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf  # v3.1.0
+        with:
+          dockerfile: Dockerfile
+          format: sarif
+          output-file: hadolint.sarif
+          no-fail: true
+
+      - name: Upload hadolint SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@dd746615b3b9d728a6a37ca2045b68ca76d4841f  # v3.27.9
+        with:
+          sarif_file: "hadolint.sarif"
+          category: "hadolint"
+
+      - name: Run hadolint (fail on errors)
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf  # v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: error
+
+  # ── Security summary ──────────────────────────────────────────────────────
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-24.04
+    needs: [trivy-fs, trivy-image, checkov, hadolint]
+    if: always()
+
+    permissions:
+      contents: none
+
+    steps:
+      - name: Write summary
+        run: |
+          echo "## Security Scan Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Scanner | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Trivy FS        | ${{ needs.trivy-fs.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Trivy Image     | ${{ needs.trivy-image.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Checkov (IaC)   | ${{ needs.checkov.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| hadolint        | ${{ needs.hadolint.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Scanned commit: \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"

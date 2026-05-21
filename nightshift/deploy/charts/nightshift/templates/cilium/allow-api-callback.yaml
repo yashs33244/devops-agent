@@ -1,0 +1,26 @@
+{{- if .Values.cilium.enabled }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "nightshift.fullname" (dict "Release" .Release "component" "worker-allow-api-callback") }}
+  namespace: {{ include "nightshift.workerNamespace" . }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: nightshift
+      app.kubernetes.io/component: worker
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: nightshift
+            app.kubernetes.io/component: nightshift-api
+      toPorts:
+        - ports:
+            - port: {{ .Values.nightshift_api.service.grpcPort | quote }}
+              protocol: TCP
+            - port: {{ .Values.nightshift_api.service.httpPort | quote }}
+              protocol: TCP
+{{- end }}

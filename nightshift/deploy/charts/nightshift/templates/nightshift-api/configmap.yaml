@@ -1,0 +1,163 @@
+{{- $name := include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-api") }}
+{{- $s3 := .Values.nightshift_api.s3 }}
+{{- /* When the bundled MinIO is on, default endpoint/bucket to it. */ -}}
+{{- $s3Endpoint := $s3.endpoint }}
+{{- $s3PresignEndpoint := $s3.presignEndpoint }}
+{{- $s3Bucket := $s3.bucket }}
+{{- if .Values.minio.enabled }}
+  {{- if not $s3Endpoint }}{{ $s3Endpoint = include "nightshift.minioEndpoint" . }}{{ end }}
+  {{- if not $s3PresignEndpoint }}{{ $s3PresignEndpoint = $s3Endpoint }}{{ end }}
+  {{- if not $s3Bucket }}{{ $s3Bucket = .Values.minio.bucket }}{{ end }}
+{{- end }}
+{{- /* When OpenBao is on, default the OIDC issuer URL to its discovery
+       provider. The audience (NS_OIDC_AUDIENCE) is sourced via env
+       valueFrom from the openbao-oidc-client Secret in statefulset.yaml,
+       not via this ConfigMap. */ -}}
+{{- $oidcIssuer := .Values.nightshift_api.auth.oidc.issuerUrl }}
+{{- if and .Values.openbao.enabled (not $oidcIssuer) }}
+  {{- $oidcIssuer = include "nightshift.openbaoIssuerURL" . }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nightshift-api
+data:
+  NS_GRPC_ADDR: {{ .Values.nightshift_api.grpcAddr | quote }}
+  NS_HTTP_ADDR: {{ .Values.nightshift_api.httpAddr | quote }}
+  NS_RUNTIME: {{ .Values.nightshift_api.runtime | quote }}
+  NS_OBJECTS_BACKEND: {{ .Values.nightshift_api.objectsBackend | quote }}
+  {{- if eq .Values.nightshift_api.objectsBackend "filesystem" }}
+  NS_OBJECTS_DIR: {{ .Values.nightshift_api.objectsDir | quote }}
+  {{- end }}
+  {{- if eq .Values.nightshift_api.objectsBackend "s3" }}
+  NS_S3_ENDPOINT: {{ $s3Endpoint | quote }}
+  NS_S3_PRESIGN_ENDPOINT: {{ $s3PresignEndpoint | quote }}
+  NS_S3_REGION: {{ $s3.region | quote }}
+  NS_S3_BUCKET: {{ $s3Bucket | quote }}
+  NS_S3_USE_PATH_STYLE: {{ $s3.usePathStyle | quote }}
+  {{- end }}
+  NS_RECORDS_BACKEND: {{ .Values.nightshift_api.recordsBackend | default "sqlite" | quote }}
+  {{- if eq (.Values.nightshift_api.recordsBackend | default "sqlite") "sqlite" }}
+  NS_DB_PATH: {{ .Values.nightshift_api.dbPath | quote }}
+  {{- end }}
+  {{- /* NS_POSTGRES_DSN is sensitive (contains password); templated
+         into the api Secret instead of this ConfigMap. */}}
+  NS_DRAIN_TIMEOUT: {{ .Values.nightshift_api.drainTimeout | quote }}
+  NS_KUBE_NAMESPACE: {{ include "nightshift.workerNamespace" . | quote }}
+  NS_KUBE_WORKER_SA: {{ .Values.nightshift_api.kube.workerServiceAccount | quote }}
+  NS_WORKER_IMAGE: {{ include "nightshift.workerImage" . | quote }}
+  {{- /* Opaque env-var passthrough merged onto every worker pod. The
+         helper computes backend-aware defaults (e.g. OpenBao address
+         when openbao + workerClaude are both enabled) and merges
+         operator overrides from `nightshift_api.worker.env` on top.
+         The API parses this as JSON and forwards keys/values verbatim;
+         it does not interpret either side. See helpers.tpl. */}}
+  NS_WORKER_ENV: {{ include "nightshift.workerEnv" . | quote }}
+  {{- /* NS_WORKER_CALLBACK becomes NS_API_URL on every worker pod. The
+         Go simulated worker dials gRPC, so it expects host:port (no
+         scheme). The Python claude worker (chunk 14) speaks REST via
+         the grpc-gateway HTTP port, so it expects a full http:// URL.
+         Operators flip ONE worker image at a time; the two are
+         mutually exclusive. */}}
+  {{- if .Values.nightshift_api.workerClaude.enabled }}
+  NS_WORKER_CALLBACK: {{ printf "http://%s.%s.svc:%d" $name .Release.Namespace (int .Values.nightshift_api.service.httpPort) | quote }}
+  # The Python worker authenticates to OpenBao via K8s SA login to
+  # fetch ANTHROPIC_API_KEY. Chunk-9 hardening defaults
+  # automountServiceAccountToken=false on worker pods; flip on for
+  # the claude image. The worker SA has no K8s API permissions in
+  # the chart, so this only enables OpenBao auth, not K8s API
+  # access. See internal/runtime/launcher.go:LaunchSpec docs.
+  NS_WORKER_MOUNT_SA_TOKEN: "true"
+  {{- else }}
+  NS_WORKER_CALLBACK: {{ printf "%s.%s.svc:%d" $name .Release.Namespace (int .Values.nightshift_api.service.grpcPort) | quote }}
+  {{- end }}
+  NS_OIDC_ISSUER_URL: {{ $oidcIssuer | quote }}
+  {{- /* When OpenBao is on, NS_OIDC_AUDIENCE is wired via env valueFrom
+         on the API container — see nightshift-api/statefulset.yaml.
+         We omit it from the ConfigMap so the explicit env var wins. */}}
+  {{- if not .Values.openbao.enabled }}
+  NS_OIDC_AUDIENCE: {{ .Values.nightshift_api.auth.oidc.audience | quote }}
+  {{- end }}
+  NS_STATIC_TOKENS_PATH: {{ .Values.nightshift_api.auth.staticTokensPath | quote }}
+  NS_SECRETS_FILE: "/etc/nightshift/secrets/secrets.yaml"
+  NS_AUTH_ADMIN_GROUP: {{ .Values.nightshift_api.auth.adminGroup | quote }}
+  {{- /* Auto-include the scheduler token name as an admin token when
+         the operator supplies a token via nightshift_api.scheduling.token.
+         The scheduler token must be admin-tier so the API trusts the
+         user_id field on CreateRun requests bearing it. */}}
+  {{- $admins := .Values.nightshift_api.auth.adminTokens | default list }}
+  {{- if and .Values.nightshift_api.scheduling.token (not (has "scheduler" $admins)) }}
+  {{- $admins = concat $admins (list "scheduler") }}
+  {{- end }}
+  {{- if $admins }}
+  NS_AUTH_ADMIN_TOKENS: {{ join "," $admins | quote }}
+  {{- end }}
+  {{- /* Resolve secrets backend: auto picks openbao when bundled
+         OpenBao is enabled, file otherwise. Operators can override
+         explicitly. */}}
+  {{- $secretsBackend := .Values.nightshift_api.secrets.backend }}
+  {{- if eq $secretsBackend "auto" }}
+    {{- if .Values.openbao.enabled }}{{ $secretsBackend = "openbao" }}{{ else }}{{ $secretsBackend = "file" }}{{ end }}
+  {{- end }}
+  NS_SECRETS_BACKEND: {{ $secretsBackend | quote }}
+  {{- if eq $secretsBackend "openbao" }}
+  NS_OPENBAO_ADDR: {{ include "nightshift.openbaoEndpoint" . | quote }}
+  NS_OPENBAO_AUTH_ROLE: "nightshift-api"
+  NS_OPENBAO_KV_MOUNT: "secret"
+  {{- end }}
+  {{- if .Values.nightshift_api.connectorCatalogFile }}
+  NS_CONNECTOR_CATALOG_FILE: {{ .Values.nightshift_api.connectorCatalogFile | quote }}
+  {{- end }}
+  {{- /* Per-session state (chunk 13). Workers read NS_SESSION_STATE_DIR
+         set by the launcher; the API uses NS_SESSION_STATE_MOUNT_PATH +
+         backend-specific knobs to drive the cascade. */}}
+  NS_SESSION_STATE_BACKEND: {{ .Values.nightshift_api.sessionState.backend | quote }}
+  {{- if ne .Values.nightshift_api.sessionState.backend "none" }}
+  NS_SESSION_STATE_MOUNT_PATH: {{ .Values.nightshift_api.sessionState.mountPath | quote }}
+  {{- end }}
+  {{- if eq .Values.nightshift_api.sessionState.backend "pvc" }}
+  NS_SESSION_STATE_PVC_NAME: {{ printf "%s-session-state" $name | quote }}
+  {{- end }}
+  {{- if eq .Values.nightshift_api.sessionState.backend "host" }}
+  NS_SESSION_STATE_HOST_ROOT: {{ .Values.nightshift_api.sessionState.host.path | quote }}
+  {{- end }}
+  {{- if eq .Values.nightshift_api.sessionState.backend "object" }}
+  {{- $sessionBucket := .Values.nightshift_api.sessionState.object.bucket }}
+  {{- if and (not $sessionBucket) .Values.minio.enabled }}{{ $sessionBucket = .Values.minio.bucket }}{{ end }}
+  NS_SESSION_STATE_OBJECT_BUCKET: {{ $sessionBucket | quote }}
+  {{- end }}
+
+  # Artifacts (chunk 15). Bucket name for artifact blobs + previews.
+  # Defaults to "artifacts" — separate from the chunk-13 session-state
+  # bucket so cleanup boundaries are explicit.
+  NS_ARTIFACTS_BUCKET: {{ .Values.nightshift_api.artifactsBucket | default "artifacts" | quote }}
+
+  # App artifacts (chunk 16). The deployer materializes app artifacts
+  # as Deployment + Service in the same namespace as the API. Image
+  # defaults are nonroot-friendly; override only if your operator
+  # requires a different registry.
+  NS_APP_DEPLOY_NAMESPACE: {{ .Values.nightshift_api.appArtifacts.namespace | default .Release.Namespace | quote }}
+  NS_APP_NGINX_IMAGE: {{ .Values.nightshift_api.appArtifacts.nginxImage | default "nginxinc/nginx-unprivileged:1-alpine" | quote }}
+  NS_APP_INIT_IMAGE: {{ .Values.nightshift_api.appArtifacts.initImage | default "curlimages/curl:latest" | quote }}
+  NS_APP_DOWNLOAD_TTL: {{ .Values.nightshift_api.appArtifacts.downloadTTL | default "30m" | quote }}
+
+  # Scheduling (chunk 17). Each Schedule materializes as a K8s CronJob
+  # whose container curls the in-cluster API URL with the bearer
+  # mounted from `tokenSecretName`. internalApiUrl auto-derives to
+  # the in-cluster service DNS when empty.
+  {{- $apiSvc := include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-api") }}
+  {{- $apiURL := .Values.nightshift_api.scheduling.internalApiUrl }}
+  {{- if not $apiURL }}{{ $apiURL = printf "http://%s.%s.svc:8080" $apiSvc .Release.Namespace }}{{ end }}
+  NS_API_INTERNAL_URL: {{ $apiURL | quote }}
+  NS_SCHEDULER_FIRE_IMAGE: {{ .Values.nightshift_api.scheduling.fireImage | default "curlimages/curl:latest" | quote }}
+  NS_SCHEDULER_TOKEN_SECRET_NAME: {{ .Values.nightshift_api.scheduling.tokenSecretName | default "nightshift-scheduler-token" | quote }}
+
+  # Metrics (chunk 18). /metrics is served on a dedicated port so
+  # Prometheus scrape doesn't mix with app traffic. The chart's
+  # ServiceMonitor (templates/nightshift-api/servicemonitor.yaml,
+  # gated off by default) targets this port.
+  NS_METRICS_ADDR: {{ .Values.nightshift_api.metrics.addr | default ":9090" | quote }}

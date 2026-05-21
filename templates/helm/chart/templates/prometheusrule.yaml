@@ -1,0 +1,49 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.alerts.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "chart.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+    release: prometheus
+spec:
+  groups:
+    - name: {{ include "chart.fullname" . }}.rules
+      interval: 30s
+      rules:
+        - alert: ServiceDown
+          expr: up{job="{{ include "chart.fullname" . }}"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Service {{ include "chart.fullname" . }} is down"
+            description: "Service has been down for more than 5 minutes"
+        - alert: HighErrorRate
+          expr: |
+            rate(http_requests_total{service="{{ .Values.serviceName | default (include "chart.fullname" .) }}",status=~"5.."}[5m]) /
+            rate(http_requests_total{service="{{ .Values.serviceName | default (include "chart.fullname" .) }}"}[5m]) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High error rate on {{ include "chart.fullname" . }}"
+            description: "Error rate is {{ "{{ $value | humanizePercentage }}" }}"
+        - alert: HighLatency
+          expr: |
+            histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service="{{ include "chart.fullname" . }}"}[5m])) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High p95 latency on {{ include "chart.fullname" . }}"
+            description: "p95 latency is {{ "{{ $value }}" }}s"
+        - alert: PodCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total{namespace="{{ .Release.Namespace }}"}[15m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod crash looping in {{ .Release.Namespace }}"
+{{- end }}

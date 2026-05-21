@@ -1,0 +1,141 @@
+# Release workflow.
+#
+# Triggers on a `vX.Y.Z` tag pushed to main. Produces a single
+# atomic release artifact set the community + customer Argo CDs both
+# consume:
+#
+#   1. Four images at public.ecr.aws/nightshiftco/<image>:vX.Y.Z
+#      (api, worker, worker-claude, ui)
+#   2. The helm chart at
+#      oci://public.ecr.aws/nightshiftco/charts/nightshift:vX.Y.Z
+#      with chart.version + chart.appVersion both set to vX.Y.Z.
+#      Argo CD Applications using `targetRevision: 0.x.x` (or any
+#      semver range) auto-pick this up on next sync.
+#   3. A GitHub Release with auto-generated notes from the commit
+#      log since the previous tag.
+#
+# All three are anonymous-pull. Customers consume #2 via Argo CD;
+# #1 is implicit (chart's image.tag default = .Chart.AppVersion).
+# #3 is for humans.
+#
+# Pre-reqs:
+#   - The five public.ecr.aws/nightshiftco repos exist (terraform
+#     manages them; manual create otherwise: `aws ecr-public
+#     create-repository --repository-name <name> --region us-east-1`).
+#   - The `nightshiftco` ECR Public alias is registered (one-time
+#     AWS Console step; cannot be terraformed).
+#   - Repo secrets:
+#       AWS_ACCOUNT_ID                — for the OIDC role ARN.
+#     The role at arn:aws:iam::<account>:role/github-actions-release
+#     must trust this repo via OIDC and carry ecr-public:* perms +
+#     sts:GetServiceBearerToken.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write   # create GH release
+  id-token: write   # AWS OIDC
+
+jobs:
+  release:
+    name: build + publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    env:
+      # ECR Public's API only lives in us-east-1.
+      AWS_REGION: us-east-1
+      # NOTE: temporarily on auto-alias `c7b4h2n5` while AWS processes
+      # the `nightshiftco` custom alias. Flip back when ACTIVE.
+      ECR_PUBLIC_REGISTRY: public.ecr.aws/c7b4h2n5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history so the auto-generated release notes can
+          # diff against the previous tag.
+          fetch-depth: 0
+
+      - name: Validate tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "::error::tag $tag is not vMAJOR.MINOR.PATCH(-prerelease)"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-release
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECR Public docker login
+        run: |
+          aws ecr-public get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin public.ecr.aws
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build + push images
+        run: |
+          for img in nightshift-api nightshift-worker nightshift-worker-claude nightshift-ui; do
+            case "$img" in
+              nightshift-worker-claude) ctx=cmd/nightshift-worker-claude ;;
+              nightshift-ui)            ctx=cmd/nightshift-ui ;;
+              *)                        ctx=. ;;
+            esac
+            dockerfile="cmd/$img/Dockerfile"
+            ref="$ECR_PUBLIC_REGISTRY/$img:$VERSION"
+            echo "::group::push $ref"
+            docker buildx build \
+              --platform linux/amd64 \
+              --push \
+              -f "$dockerfile" \
+              -t "$ref" \
+              "$ctx"
+            echo "::endgroup::"
+          done
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Helm registry login
+        # Docker login to public.ecr.aws does not auto-flow into
+        # helm's OCI client; helm has its own credentialstore.
+        run: |
+          aws ecr-public get-login-password --region "$AWS_REGION" \
+            | helm registry login \
+                --username AWS \
+                --password-stdin \
+                public.ecr.aws
+
+      - name: Helm package + push to ECR Public OCI
+        # Stamp version + appVersion in the packaged chart only —
+        # the source tracks `appVersion: "0.0.0-dev"` and CI versions
+        # per-tag. This keeps the source repo tag-agnostic.
+        run: |
+          chart_dir=deploy/charts/nightshift
+          mkdir -p /tmp/charts
+          helm package "$chart_dir" \
+            --version "$VERSION" \
+            --app-version "$VERSION" \
+            --destination /tmp/charts
+          helm push "/tmp/charts/nightshift-$VERSION.tgz" \
+            "oci://$ECR_PUBLIC_REGISTRY/charts"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          # Treat 0.x as latest-stable for now. Switch policy when
+          # we cut 1.0.0.
+          make_latest: true

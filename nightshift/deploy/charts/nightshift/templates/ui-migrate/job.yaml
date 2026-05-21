@@ -1,0 +1,78 @@
+{{- /* Post-install / post-upgrade UI migration Job. Rendered only
+       when both ui.enabled and postgres.enabled. Runs
+       `bunx drizzle-kit migrate` against DATABASE_URL (sourced from
+       the UI Secret) to apply the better-auth schema (user,
+       session, account, verification tables) to the shared
+       Postgres database.
+
+       Same hook-ordering rationale as the API's migration Job:
+       post- (not pre-) so the Postgres StatefulSet exists by the
+       time this Job runs. UI pods don't run drizzle-kit migrate
+       themselves anymore (the Deployment uses the image's default
+       CMD = next start); this Job is the canonical schema-applier.
+
+       For sqlite mode, no Job: each StatefulSet pod runs
+       drizzle-kit migrate at startup against its own SQLite file. */ -}}
+{{- if and .Values.ui.enabled .Values.postgres.enabled }}
+{{- $uiName := include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-ui") }}
+{{- $name := printf "%s-migrate" $uiName | trunc 63 | trimSuffix "-" }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nightshift-ui-migrate
+  annotations:
+    # helm install path.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    # Argo CD path: Sync hook with wave 18, alongside the API migrate
+    # Job. Runs after Postgres is up (default wave 0) and before the
+    # UI Deployment (wave 20), so the better-auth schema (user,
+    # session, account, verification) exists before any UI pod starts.
+    "argocd.argoproj.io/hook": Sync
+    "argocd.argoproj.io/sync-wave": "18"
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "nightshift.selectorLabels" (dict "Release" .Release "component" "nightshift-ui") | nindent 8 }}
+        app.kubernetes.io/component: nightshift-ui-migrate
+        {{- if .Values.tenant.name }}
+        tenant: {{ .Values.tenant.name }}
+        {{- end }}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ $uiName }}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: migrate
+          image: {{ include "nightshift.uiImage" . }}
+          imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
+          # Reuses the UI image (drizzle-kit + db/drizzle/*.sql ship
+          # in /app). bunx resolves drizzle-kit from node_modules/.bin.
+          command:
+            - sh
+            - -c
+            - bunx drizzle-kit migrate
+          env:
+            # DATABASE_URL is composed at pod start from the live
+            # nightshift-postgres Secret rather than the placeholder-
+            # baked value the chart used to write into the UI Secret.
+            # See _helpers.tpl `nightshift.postgresEnv`.
+            {{- include "nightshift.postgresEnv" (dict "dsnVar" "DATABASE_URL" "context" .) | nindent 12 }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+{{- end }}

@@ -1,0 +1,92 @@
+# =============================================================================
+# Container Structure Test — Go (distroless/static:nonroot)
+# Docs: https://github.com/GoogleContainerTools/container-structure-test
+#
+# Run:
+#   container-structure-test test \
+#     --image <your-image>:tag \
+#     --config container-structure-test.yaml
+#
+# NOTE: Replace "/server" below with your actual {{BINARY_NAME}} if you
+# changed the template variable from its default value.
+# =============================================================================
+schemaVersion: "2.0.0"
+
+# ---------------------------------------------------------------------------
+# File / directory existence tests
+# ---------------------------------------------------------------------------
+fileExistenceTests:
+  # The compiled binary must be present at the root (as placed by the Dockerfile).
+  - name: "server binary exists"
+    path: "/server"
+    shouldExist: true
+    # Owner must be nonroot (65532) — permissions should at minimum be executable.
+    permissions: "-rwxr-xr-x"
+
+  # -------------------------------------------------------------------------
+  # Negative tests — binaries that must NOT exist in distroless/static.
+  # -------------------------------------------------------------------------
+  - name: "sh shell is absent"
+    path: "/bin/sh"
+    shouldExist: false
+
+  - name: "bash shell is absent"
+    path: "/bin/bash"
+    shouldExist: false
+
+  - name: "wget is absent"
+    path: "/usr/bin/wget"
+    shouldExist: false
+
+  - name: "curl is absent"
+    path: "/usr/bin/curl"
+    shouldExist: false
+
+  - name: "ls is absent"
+    path: "/bin/ls"
+    shouldExist: false
+
+  - name: "apt-get is absent"
+    path: "/usr/bin/apt-get"
+    shouldExist: false
+
+  - name: "apk is absent"
+    path: "/sbin/apk"
+    shouldExist: false
+
+  # CA certificates must be present (copied from debian base into distroless/static).
+  - name: "CA certificates bundle is present"
+    path: "/etc/ssl/certs/ca-certificates.crt"
+    shouldExist: true
+
+# ---------------------------------------------------------------------------
+# Metadata / configuration tests
+# ---------------------------------------------------------------------------
+metadataTest:
+  exposedPorts:
+    - "8080"             # matches the default {{PORT}}; update if changed
+
+  # distroless:nonroot pre-configures uid=65532.
+  user: "65532"
+
+  # Entrypoint must be the binary directly — no shell wrapper.
+  entrypoint:
+    - "/server"          # update if {{BINARY_NAME}} != server
+
+# ---------------------------------------------------------------------------
+# Command tests
+# NOTE: distroless/static has absolutely no shell or utilities. The only
+# executable is the application binary itself. We use a --version or --help
+# flag to verify the binary executes without crashing immediately.
+# Adjust the flag and expectedOutput to match your application.
+# ---------------------------------------------------------------------------
+commandTests:
+  # Basic smoke test: binary must execute and exit cleanly (or print usage).
+  # Many Go binaries exit 0 on --version or exit 1 on --help — adjust exitCode.
+  - name: "server binary is executable"
+    command: "/server"
+    args: ["--version"]
+    exitCode: 0
+    # Uncomment and adjust if your binary prints a version string:
+    # expectedOutput:
+    #   - "^v?[0-9]+\\.[0-9]+"

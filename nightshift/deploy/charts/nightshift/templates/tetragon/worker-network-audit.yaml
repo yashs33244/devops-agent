@@ -1,0 +1,28 @@
+{{- if .Values.tetragon.enabled }}
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: {{ include "nightshift.fullname" (dict "Release" .Release "component" "worker-network-audit") }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nightshift
+      app.kubernetes.io/component: worker
+  kprobes:
+    - call: "tcp_connect"
+      syscall: false
+      args:
+        - index: 0
+          type: "sock"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "NotDAddr"
+              values:
+                - "127.0.0.1"
+          matchActions:
+            - action: Post
+{{- end }}

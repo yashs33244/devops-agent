@@ -1,0 +1,33 @@
+defmodule Worker.Application do
+  # See https://hexdocs.pm/elixir/Application.html
+  # for more information on OTP Applications
+  @moduledoc false
+
+  use Application
+  require Logger
+
+  def start(_type, _args) do
+    Logger.info "Starting worker"
+    children =
+      [
+        {FT.K8S.TrafficDrainHandler, Core.drain_config()}
+      ] ++
+      Worker.conf(:rollout_pipeline) ++
+      Worker.conf(:upgrade_pipeline) ++
+      Worker.conf(:demo_projects_pipeline) ++
+      Worker.conf(:docker_pipeline) ++
+      broker()
+
+    # See https://hexdocs.pm/elixir/Supervisor.html
+    # for other strategies and supported options
+    opts = [strategy: :one_for_one, name: Worker.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+
+  def broker() do
+    case Worker.conf(:start_broker) do
+      true -> [{Worker.Conduit.Broker, []}, Core.Services.Cloud.Poller]
+      _ -> []
+    end
+  end
+end

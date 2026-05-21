@@ -1,0 +1,97 @@
+fragment OIDCProvider on OidcProvider {
+  id
+  name
+  description
+  clientId
+  authMethod
+  clientSecret
+  redirectUris
+  bindings {
+    ...OidcProviderBinding
+  }
+  configuration {
+    issuer
+    authorizationEndpoint
+    tokenEndpoint
+    jwksUri
+    userinfoEndpoint
+  }
+  invites {
+    id
+    email
+  }
+}
+
+fragment OidcProviderBinding on OidcProviderBinding {
+  id
+  user {
+    ...User
+  }
+  group {
+    ...Group
+  }
+}
+
+fragment OAuthInfo on OauthInfo {
+  provider
+  authorizeUrl
+}
+
+query OIDCConsent($challenge: String!) {
+  oidcConsent(challenge: $challenge) {
+    repository {
+      name
+      icon
+      darkIcon
+    }
+    consent {
+      requestedScope
+      skip
+    }
+  }
+}
+
+mutation Consent($challenge: String!, $scopes: [String]) {
+  oauthConsent(challenge: $challenge, scopes: $scopes) {
+    redirectTo
+  }
+}
+
+query OIDCProviders($first: Int, $last: Int, $after: String, $before: String) {
+  oidcProviders(first: $first, last: $last, after: $after, before: $before) {
+    pageInfo {
+      ...PageInfo
+    }
+    edges {
+      node {
+        ...OIDCProvider
+      }
+    }
+  }
+}
+
+mutation CreateProvider($installationId: ID, $attributes: OidcAttributes!) {
+  createOidcProvider(installationId: $installationId, attributes: $attributes) {
+    ...OIDCProvider
+  }
+}
+
+mutation UpdateProvider(
+  $id: ID
+  $installationId: ID
+  $attributes: OidcAttributes!
+) {
+  updateOidcProvider(
+    id: $id
+    installationId: $installationId
+    attributes: $attributes
+  ) {
+    ...OIDCProvider
+  }
+}
+
+mutation DeleteProvider($id: ID!) {
+  deleteOidcProvider(id: $id) {
+    ...OIDCProvider
+  }
+}

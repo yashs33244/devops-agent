@@ -1,0 +1,36 @@
+{{- if .Values.openbao.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: openbao
+data:
+  config.hcl: |
+    storage "raft" {
+      path    = "/openbao/data"
+      node_id = "openbao-0"
+    }
+
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = true
+    }
+
+    api_addr     = "{{ include "nightshift.openbaoEndpoint" . }}"
+    cluster_addr = "http://openbao-0.{{ include "nightshift.openbaoFullname" . }}.{{ .Release.Namespace }}.svc:8201"
+
+    # mlock is unavailable on most managed kubelets without
+    # IPC_LOCK; the chart's hardened pod security context drops
+    # all capabilities including IPC_LOCK, so disable.
+    disable_mlock = true
+    {{- if .Values.openbao.ui }}
+
+    # Web UI at /ui. Off by default; flip on when operators want
+    # browser access for identity/group management. Browser must
+    # reach OpenBao through an ingress for /ui to be useful.
+    ui = true
+    {{- end }}
+{{- end }}

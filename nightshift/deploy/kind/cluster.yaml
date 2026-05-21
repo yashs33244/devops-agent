@@ -1,0 +1,23 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: nightshift-dev
+# disableDefaultCNI lets Cilium replace kindnet. Pods stay Pending
+# until `make kind-runtime-security` installs Cilium. The /procHost
+# extraMount is required by Tetragon (--set tetragon.hostProcPath).
+# Multi-node so Cilium's anti-affinity-driven HA replicas (operator,
+# Hubble Relay) can schedule and the topology mirrors a real cluster.
+networking:
+  disableDefaultCNI: true
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /proc
+        containerPath: /procHost
+  - role: worker
+    extraMounts:
+      - hostPath: /proc
+        containerPath: /procHost
+  - role: worker
+    extraMounts:
+      - hostPath: /proc
+        containerPath: /procHost

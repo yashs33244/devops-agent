@@ -1,0 +1,106 @@
+# =============================================================================
+# Container Structure Test — Node.js (distroless:nonroot)
+# Docs: https://github.com/GoogleContainerTools/container-structure-test
+#
+# Run:
+#   container-structure-test test \
+#     --image <your-image>:tag \
+#     --config container-structure-test.yaml
+# =============================================================================
+schemaVersion: "2.0.0"
+
+# ---------------------------------------------------------------------------
+# File / directory existence tests
+# ---------------------------------------------------------------------------
+fileExistenceTests:
+  # Compiled output must be present (build must have run successfully).
+  - name: "dist directory exists"
+    path: "/app/dist"
+    shouldExist: true
+    permissions: ""
+
+  # Entry point file must exist.
+  - name: "dist/index.js entrypoint exists"
+    path: "/app/dist/index.js"
+    shouldExist: true
+    permissions: ""
+
+  # Production node_modules must be present.
+  - name: "node_modules directory exists"
+    path: "/app/node_modules"
+    shouldExist: true
+    permissions: ""
+
+  # package.json must be present for module resolution.
+  - name: "package.json exists"
+    path: "/app/package.json"
+    shouldExist: true
+    permissions: ""
+
+  # -------------------------------------------------------------------------
+  # Negative tests — these binaries must NOT be present in the distroless image.
+  # Their presence would indicate the wrong base image was used.
+  # -------------------------------------------------------------------------
+  - name: "npm is absent (distroless should have no package manager)"
+    path: "/usr/bin/npm"
+    shouldExist: false
+
+  - name: "yarn is absent"
+    path: "/usr/bin/yarn"
+    shouldExist: false
+
+  - name: "wget is absent"
+    path: "/usr/bin/wget"
+    shouldExist: false
+
+  - name: "curl is absent"
+    path: "/usr/bin/curl"
+    shouldExist: false
+
+  - name: "sh shell is absent"
+    path: "/bin/sh"
+    shouldExist: false
+
+  - name: "bash shell is absent"
+    path: "/bin/bash"
+    shouldExist: false
+
+# ---------------------------------------------------------------------------
+# Metadata / configuration tests
+# ---------------------------------------------------------------------------
+metadataTest:
+  # The PORT environment variable must be set.
+  envVars:
+    - key: PORT
+      value: ""         # empty string = just check the key exists, any value accepted
+      isRegex: false
+
+  - key: NODE_ENV
+    value: "production"
+    isRegex: false
+
+  # The image must expose the expected port.
+  exposedPorts:
+    - "3000"          # matches the default {{PORT}}; update if you changed the template variable
+
+  # The final image must not run as root.
+  # distroless:nonroot sets USER to uid 65532 by default.
+  user: "65532"
+
+  # The CMD must reference the JS entrypoint (not a shell or npm script).
+  cmd:
+    - "dist/index.js"
+
+# ---------------------------------------------------------------------------
+# Command tests (smoke tests executed inside the container)
+# NOTE: distroless has no shell so only the node binary itself can be exec'd.
+# These tests verify the runtime works but are intentionally minimal.
+# ---------------------------------------------------------------------------
+commandTests:
+  # Verify Node.js runtime is present and executable.
+  - name: "node binary is present and runs"
+    command: "node"
+    args: ["--version"]
+    expectedOutput:
+      - "^v22\\."    # must be Node 22.x
+    exitCode: 0

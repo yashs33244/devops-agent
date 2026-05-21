@@ -1,0 +1,98 @@
+# =============================================================================
+# Container Structure Test — Python 3.12 (distroless:nonroot)
+# Docs: https://github.com/GoogleContainerTools/container-structure-test
+#
+# Run:
+#   container-structure-test test \
+#     --image <your-image>:tag \
+#     --config container-structure-test.yaml
+# =============================================================================
+schemaVersion: "2.0.0"
+
+# ---------------------------------------------------------------------------
+# File / directory existence tests
+# ---------------------------------------------------------------------------
+fileExistenceTests:
+  # Application source must be present.
+  - name: "app directory exists"
+    path: "/app"
+    shouldExist: true
+    permissions: ""
+
+  # Site-packages must be present (installed by uv in builder stage).
+  - name: "python site-packages directory exists"
+    path: "/usr/local/lib/python3.12/site-packages"
+    shouldExist: true
+    permissions: ""
+
+  # -------------------------------------------------------------------------
+  # Negative tests — tools that must NOT be present in the distroless image.
+  # -------------------------------------------------------------------------
+  - name: "pip is absent (distroless should have no package manager)"
+    path: "/usr/local/bin/pip"
+    shouldExist: false
+
+  - name: "pip3 is absent"
+    path: "/usr/local/bin/pip3"
+    shouldExist: false
+
+  - name: "uv is absent (only used at build time)"
+    path: "/usr/local/bin/uv"
+    shouldExist: false
+
+  - name: "sh shell is absent"
+    path: "/bin/sh"
+    shouldExist: false
+
+  - name: "bash shell is absent"
+    path: "/bin/bash"
+    shouldExist: false
+
+  - name: "wget is absent"
+    path: "/usr/bin/wget"
+    shouldExist: false
+
+  - name: "curl is absent"
+    path: "/usr/bin/curl"
+    shouldExist: false
+
+  - name: "apt-get is absent"
+    path: "/usr/bin/apt-get"
+    shouldExist: false
+
+# ---------------------------------------------------------------------------
+# Metadata / configuration tests
+# ---------------------------------------------------------------------------
+metadataTest:
+  envVars:
+    # PORT must be set (templated at build time).
+    - key: PORT
+      value: ""          # any value accepted — just verify the key is present
+      isRegex: false
+
+    - key: PYTHONDONTWRITEBYTECODE
+      value: "1"
+      isRegex: false
+
+    - key: PYTHONUNBUFFERED
+      value: "1"
+      isRegex: false
+
+  exposedPorts:
+    - "8000"             # matches the default {{PORT}}; update if changed
+
+  # distroless:nonroot pre-configures uid=65532.
+  user: "65532"
+
+# ---------------------------------------------------------------------------
+# Command tests
+# NOTE: distroless has no shell — only direct binary execution is possible.
+# ---------------------------------------------------------------------------
+commandTests:
+  # Verify the Python interpreter is present.
+  - name: "python3 interpreter is present"
+    command: "/usr/bin/python3"
+    args: ["--version"]
+    expectedOutput:
+      - "^Python 3\\.12\\."
+    exitCode: 0

@@ -1,0 +1,38 @@
+# Helm values for prometheus-community/kube-prometheus-stack
+# Install: helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#   -n monitoring --create-namespace -f values-kube-prometheus-stack.yaml
+
+grafana:
+  enabled: true
+  adminPassword: admin
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki-gateway.monitoring.svc.cluster.local:80
+      access: proxy
+
+prometheus:
+  prometheusSpec:
+    # Scrape all ServiceMonitors/PodMonitors, not just ones from this chart
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    # Retain metrics for 15 days
+    retention: 15d
+
+# Disable components not needed for single-node
+alertmanager:
+  enabled: true
+
+nodeExporter:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true

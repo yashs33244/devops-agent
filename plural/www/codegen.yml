@@ -1,0 +1,23 @@
+overwrite: true
+schema: "../schema/schema.graphql"
+documents: './src/graph/**/*.graphql'
+generates:
+  src/generated/graphql.ts:
+    plugins:
+      - "typescript"
+      - "typescript-operations"
+      - "typescript-react-apollo"
+      - "named-operations-object"
+      - add:
+          content: 
+            - "/* eslint-disable */"
+            - "/* prettier-ignore */"
+config:
+  scalars:
+    Map: Map<string, unknown>
+    UploadOrUrl: string
+    DateTime: Date
+    Yaml: unknown
+hooks:
+  afterAllFileWrite:
+    - eslint --fix

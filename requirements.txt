@@ -1,0 +1,21 @@
+# devops-agent tool dependencies
+# Install: pip install -r requirements.txt
+
+# Core
+click==8.1.8
+rich==13.9.4
+pydantic==2.10.2
+python-dotenv==1.0.1
+jinja2==3.1.4
+
+# Cloud SDKs (install the ones you need)
+boto3==1.35.75          # AWS
+azure-identity==1.19.0  # Azure
+azure-mgmt-resource==23.1.1  # Azure
+google-cloud-container==2.53.0  # GCP
+
+# Terraform runner
+python-terraform==0.10.1
+
+# Git operations
+gitpython==3.1.43

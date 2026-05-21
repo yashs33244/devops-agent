@@ -1,0 +1,670 @@
+# Default values for the nightshift chart.
+#
+# The chart deploys nightshift-api plus optional MinIO (chunk 10),
+# OpenBao OIDC IdP (chunk 10a), and runtime-security manifests for
+# worker pods (chunk 9). Per-user RWX state lands in chunk 13;
+# Postgres records backend lands in a follow-up chunk.
+#
+# Required at install time (no defaults; helm refuses to render
+# without them):
+#
+#   --set tenant.name=<short-dns-safe-id>
+#   --set-file nightshift_api.workerHmac=<path>
+#   --set-file nightshift_api.objectsHmac=<path>
+
+tenant:
+  # Short DNS-safe identifier used in labels and hostnames.
+  name: ""
+
+image:
+  # Public registry that ships chart-versioned tagged images (`vX.Y.Z`).
+  # Pulls are anonymous; no IAM trust is required by consumer clusters.
+  # Override to `<account>.dkr.ecr.us-east-1.amazonaws.com/nightshift`
+  # if pulling SHA-tagged dev images from a private ECR built by
+  # `make eks-quickstart`.
+  #
+  # NOTE: temporarily on the auto-alias `c7b4h2n5` while AWS is
+  # processing the custom `nightshiftco` alias registration. Flip
+  # this + .github/workflows/release.yml + customer Application
+  # repoURLs back to `nightshiftco` once the alias goes ACTIVE. Both
+  # URLs serve the same registry; the swap is byte-equivalent.
+  registry: public.ecr.aws/c7b4h2n5
+  # Tag applied to all chart images unless a per-component image.tag
+  # overrides. Empty string falls back to `.Chart.AppVersion`, which
+  # release CI keeps in lockstep with the chart `version` on
+  # `git tag vX.Y.Z`. Override (`sha-<shortsha>` etc.) is supported
+  # for in-flight or cherry-picked builds; production deployments
+  # leave it empty so the chart-version → image-version coupling holds.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+nightshift_api:
+  replicas: 1
+
+  # Records backend selector. "sqlite" (default) renders nightshift-api
+  # as a single-replica StatefulSet with a per-pod SQLite PVC.
+  # "postgres" renders a multi-replica Deployment, requires
+  # postgres.enabled=true (or postgresDSN pointing at an external
+  # Postgres) and a pre-install migration Job. Wires
+  # NS_RECORDS_BACKEND=postgres on the pods.
+  recordsBackend: sqlite
+
+  # External-Postgres DSN (recordsBackend=postgres + postgres.enabled=false).
+  # Standard libpq URL form. Leave empty to use the bundled Postgres.
+  postgresDSN: ""
+
+  image:
+    repository: nightshift-api
+    # tag: ""  # override; falls back to .Values.image.tag
+
+  # Worker image the API launches per run. In production this is the
+  # LLM-backed worker (chunk 14, `nightshift-worker-claude`). For the
+  # protocol-conformance reference it stays as the simulated worker.
+  # To switch:
+  #   --set nightshift_api.worker.repository=nightshift-worker-claude
+  #   --set nightshift_api.workerClaude.enabled=true
+  worker:
+    repository: nightshift-worker
+    # tag: ""  # falls back to .Values.image.tag
+    # Create the ServiceAccount worker pods run under. The skeleton
+    # worker needs no K8s API permissions; chunk 10 wires per-user RWX
+    # mounts here. The pod's hardened SecurityContext is applied by the
+    # launcher (internal/runtime/kubernetes.go), not by helm — see
+    # deploy/THREAT_MODEL.md.
+    createServiceAccount: true
+    # Extra env vars the API forwards onto every worker pod. Operators
+    # use this to configure backend-specific worker behavior without
+    # any code coupling in the API or worker binaries (which read these
+    # via os.Getenv). Merged on top of chart-derived defaults — see
+    # the `nightshift.workerEnv` helper in templates/_helpers.tpl. Most
+    # operators leave this empty and rely on the helper's defaults.
+    env: {}
+
+  # Chunk 14 — `nightshift-worker-claude` Python image. When enabled:
+  #   * NS_API_URL switches from gRPC (host:50051) to the HTTP gateway
+  #     base (http://<svc>:8080) because the Python worker speaks REST,
+  #     not gRPC. The Go simulated worker requires gRPC, so the two
+  #     images are mutually exclusive — switch one at a time.
+  #   * Bootstrap extends the nightshift-worker OpenBao policy with
+  #     read on `secret/data/nightshift/anthropic-api-key`. Operator
+  #     must pre-seed that key out-of-band before running the worker.
+  workerClaude:
+    enabled: false
+    # KV path the worker reads via OpenBao K8s-auth.
+    anthropicKeyPath: nightshift/anthropic-api-key
+
+  service:
+    type: ClusterIP
+    grpcPort: 50051
+    httpPort: 8080
+    metricsPort: 9090
+
+  # Chunk 18 — Prometheus metrics on a dedicated port.
+  metrics:
+    addr: ":9090"
+    # ServiceMonitor for Prometheus Operator. Defaults off so the
+    # chart works on clusters without the Operator CRDs installed.
+    serviceMonitor:
+      enabled: false
+      interval: "30s"
+      scrapeTimeout: "10s"
+      # Extra labels to apply to the ServiceMonitor for matching the
+      # Operator's Prometheus selector.
+      labels: {}
+
+  storage:
+    db:
+      size: 1Gi
+      storageClassName: ""
+    objects:
+      size: 5Gi
+      storageClassName: ""
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # --- Server config that surfaces as NS_* env vars ---
+  runtime: kubernetes      # NS_RUNTIME
+  grpcAddr: ":50051"
+  httpAddr: ":8080"
+  objectsBackend: filesystem    # filesystem (default) | s3
+  objectsDir: /var/lib/nightshift/objects
+  dbPath: /var/lib/nightshift/db/nightshift.db
+  drainTimeout: 15s
+  # Bucket for artifact blobs + companion previews (chunk 15).
+  # Logical name; the filesystem backend creates a directory under
+  # objectsDir, the s3 backend uses NS_S3_BUCKET as the physical store
+  # and NS_ARTIFACTS_BUCKET as the per-domain logical scope.
+  artifactsBucket: artifacts
+
+  # App artifacts (chunk 16). The Artifacts service deploys an nginx
+  # pod per app artifact; HTML lives in the artifacts bucket and is
+  # fetched by an init container. Image defaults are unprivileged-
+  # nonroot-friendly so the hardened pod SecurityContext works out of
+  # the box.
+  appArtifacts:
+    # Namespace to create app Deployments + Services in. Empty = same
+    # namespace as the release.
+    namespace: ""
+    nginxImage: nginxinc/nginx-unprivileged:1-alpine
+    initImage: curlimages/curl:latest
+    # TTL on the presigned URL the init container fetches the HTML
+    # with. Longer TTLs absorb image-pull latency on cold pulls.
+    downloadTTL: 30m
+
+  # Scheduling (chunk 17). Each Schedule materializes as a K8s
+  # CronJob whose pod curls the API's CreateRun. The bearer is
+  # mounted from a Secret + must also be registered as a static
+  # admin token on the API for the user_id in the request body to
+  # be trusted.
+  scheduling:
+    fireImage: curlimages/curl:latest
+    tokenSecretName: nightshift-scheduler-token
+    # Operator-supplied bearer token. When set, the chart creates the
+    # Secret + auto-registers the value into static + admin tokens.
+    # Leave empty to skip the chart-side wiring (operator can manage
+    # the Secret + token registration themselves).
+    token: ""
+    # In-cluster URL the CronJob pods POST CreateRun to. Empty
+    # auto-derives from the API service name + the cluster's local
+    # DNS suffix.
+    internalApiUrl: ""
+
+  # S3-backend configuration (active when objectsBackend == s3).
+  # When .Values.minio.enabled is true, endpoint/presignEndpoint/
+  # bucket/credentialsSecret default to the bundled MinIO; setting
+  # them explicitly is only required for external S3.
+  s3:
+    # Internal endpoint the API uses for control-plane ops
+    # (HeadBucket, HeadObject). Auto-defaults to the bundled MinIO
+    # Service URL when minio.enabled.
+    endpoint: ""
+    # Endpoint baked into presigned URLs handed to clients/workers.
+    # Equal to `endpoint` for in-cluster access; differs only when
+    # MinIO is exposed externally (chunk-10/UI work).
+    presignEndpoint: ""
+    region: us-east-1
+    # The single underlying S3 bucket. Logical (bucket, key) pairs
+    # are mapped to `<bucket>/<key>` prefixes inside it. Auto-defaults
+    # to .Values.minio.bucket when minio.enabled.
+    bucket: ""
+    # Path-style addressing — required for MinIO; safe with real S3.
+    usePathStyle: true
+    # Name of an operator-supplied Secret that exposes
+    # MINIO_ROOT_USER / MINIO_ROOT_PASSWORD (or the equivalent S3
+    # access key / secret key) under those keys. Unused (empty)
+    # under the bundled-MinIO path; the API consumes the auto-
+    # rendered <release>-minio Secret directly.
+    credentialsSecret: ""
+
+  kube:
+    # Namespace the api launches worker Jobs into. Empty → release
+    # namespace.
+    namespace: ""
+    # ServiceAccount for worker pods. Operator-managed (chunk 10
+    # wires the SA + its pod-security context).
+    workerServiceAccount: nightshift-worker
+
+  auth:
+    # OIDC is disabled when issuerUrl is empty.
+    oidc:
+      issuerUrl: ""
+      audience: ""
+    # Path in the Secrets backend at which static tokens live. Must
+    # match the server default so the Secret mount + server config
+    # agree.
+    staticTokensPath: secret/nightshift/static-tokens
+    # Operator-supplied map of <principal-name>: <token>. Rendered
+    # into the Secret; the pod mounts the Secret as a YAML file that
+    # internal/secrets.File loads.
+    staticTokens: {}
+    # OIDC `groups` claim value that promotes a user to admin (chunk
+    # 11). Empty disables OIDC-based admin RBAC. The bundled OpenBao
+    # OIDC scope template (chunk 10a) emits the entity's group names
+    # under this claim.
+    adminGroup: admin
+    # List of static-token names whose principal is treated as admin
+    # (chunk 11). Names must match keys in `auth.staticTokens`.
+    # Useful for CLI-driven admin operations without an id_token.
+    adminTokens: []
+
+  # Secrets backend for per-user connector credentials (chunk 11).
+  # `file` reuses NS_SECRETS_FILE and is read-only — any write returns
+  # ErrNotImplemented (Unimplemented to gRPC), so SetConnectorStaticToken
+  # fails. `openbao` reads + writes against the in-cluster OpenBao via
+  # the kubernetes auth role provisioned by chunk 10a; requires
+  # openbao.enabled. When `auto`, the chart picks `openbao` when
+  # openbao.enabled is true, otherwise `file`.
+  secrets:
+    backend: auto
+
+  # Connector catalog (chunk 11). Path inside the API pod to the YAML
+  # catalog. Empty uses the embedded default (no entries). Operators
+  # mount their catalog via a ConfigMap + extraVolumeMounts and point
+  # this at the mount path.
+  connectorCatalogFile: ""
+
+  # Per-session state volume (chunk 13). The worker reads
+  # NS_SESSION_STATE_DIR (set by the launcher) and persists per-session
+  # SDK state there; DeleteSession cascades to remove it. Layout on
+  # disk and in object stores is identical:
+  #
+  #   <mount>/<user_id>/<session_id>/...   (pvc / host)
+  #   sessions/<user_id>/<session_id>/...  (object)
+  #
+  # backend selects the medium:
+  #   none    — disabled. No volume, no NS_SESSION_STATE_DIR. Default.
+  #   pvc     — production. One shared RWX PVC, mounted into the API
+  #             pod (full root, for cleanup) and worker pods (subPath-
+  #             scoped to <user_id>/<session_id>). Requires a CSI
+  #             driver that supports ReadWriteMany (NFS, EFS, CephFS,
+  #             Longhorn — not the default RWO storage class on most
+  #             distros).
+  #   host    — single-node only (kind quick-start). Workers mount a
+  #             hostPath under the per-session subdir on the launcher
+  #             node. The API does its cleanup on the same host.
+  #   object  — multi-node safe, no shared filesystem required. Worker
+  #             pods get an emptyDir at NS_SESSION_STATE_DIR; the
+  #             worker fetches prior session state from the API at
+  #             startup and uploads back at finalize. The API persists
+  #             everything under sessions/<u>/<s>/... in the configured
+  #             object bucket. Recommended for any cloud / multi-node
+  #             cluster — and the supported default for kind, since
+  #             local-path is RWO. Requires nightshift_api.sessionState
+  #             .object.bucket to be set (or omit and it inherits the
+  #             top-level S3 bucket).
+  sessionState:
+    backend: none
+    mountPath: /var/lib/nightshift/session-state
+    pvc:
+      enabled: false
+      storageClass: ""
+      size: 10Gi
+      accessModes:
+        - ReadWriteMany
+    host:
+      path: /var/lib/nightshift/session-state
+    object:
+      bucket: ""
+
+  # ≥ 16-byte secrets. Do NOT commit. Pass via:
+  #   --set-file nightshift_api.workerHmac=<file>
+  #   --set-file nightshift_api.objectsHmac=<file>
+  workerHmac: ""
+  objectsHmac: ""
+
+  # Ingress for the HTTP (grpc-gateway) port. gRPC ingress is out of
+  # scope for the skeleton.
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    # Free-form ingress annotations. Merged with the cert-manager
+    # annotation (below) when clusterIssuer is set.
+    annotations: {}
+    # When non-empty, the template renders
+    # `cert-manager.io/cluster-issuer: <value>` and auto-populates the
+    # `tls:` section with `secretName: <fullname>-tls` (operator-overridable
+    # via `tls.secretName`). Leave empty when cert-manager isn't in use.
+    clusterIssuer: ""
+    tls:
+      secretName: ""
+
+  podSecurityContext:
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    runAsNonRoot: true
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Runtime security manifests for worker pods (chunk 9). Both default to
+# disabled because they require their respective operators to be
+# installed in the cluster (Cilium and Tetragon). Standalone manifests
+# live under deploy/cilium/ and deploy/tetragon/ for operators who
+# prefer to apply them directly via kubectl.
+
+cilium:
+  # Render CiliumNetworkPolicy resources sandboxing worker egress to
+  # kube-dns + the nightshift-api callback. Default-deny baseline.
+  # Requires Cilium ≥ 1.16 with DNS policy enforcement enabled.
+  enabled: false
+
+tetragon:
+  # Render TracingPolicy resources auditing exec, sensitive-file
+  # access, and non-loopback TCP connect on worker pods. Audit-only
+  # (Post action). Requires Tetragon installed cluster-wide.
+  enabled: false
+
+# Bundled in-cluster MinIO (chunk 10a). Disabled by default — flip on
+# for the kind/k3d quick-start to give the chart a real S3 surface to
+# talk to. For production, run a managed S3 (real S3, GCS via S3 API,
+# R2, etc.) and leave this off; configure nightshift_api.s3.* +
+# nightshift_api.s3.credentialsSecret to point at it.
+# Bundled in-cluster Postgres for nightshift-api's records backend.
+# Disabled by default — flip on for the kind quickstart's Postgres
+# mode (`make kind-quickstart`, which sets nightshift_api.recordsBackend=postgres).
+# When enabled, the chart:
+#   1. installs a single-replica Postgres StatefulSet with a PVC
+#   2. runs a pre-install Helm Job that calls `nightshift-api
+#      --migrate-only` to apply schema before the API Deployment
+#      rolls out (so multi-replica cold-start can't race on
+#      CREATE TABLE IF NOT EXISTS)
+#   3. wires NS_RECORDS_BACKEND=postgres + NS_POSTGRES_DSN on the
+#      API pods, with the password mounted from this chart's
+#      postgres Secret via secretKeyRef.
+#
+# For production, run a managed Postgres (RDS, Cloud SQL, Crunchy,
+# etc.) and leave this off; set nightshift_api.recordsBackend=postgres
+# and nightshift_api.postgresDSN to point at it directly.
+postgres:
+  enabled: false
+
+  image:
+    # Official upstream Postgres image. Pinned for reproducibility.
+    # Track major-version upgrades intentionally — not a minor bump.
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+
+  # In-cluster credentials for the bundled Postgres. MUST be supplied
+  # at install time when postgres.enabled (e.g. via
+  # --set-file postgres.password=<file> with random hex). Same Secret
+  # is wired into the API + migration Job via envFrom + envSecretKeyRef.
+  username: nightshift
+  password: ""
+  database: nightshift
+
+  storage:
+    size: 10Gi
+    storageClassName: ""
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 2
+      memory: 2Gi
+
+minio:
+  enabled: false
+
+  image:
+    # docker.io/minio/minio is the Docker Hub mirror (quay.io/minio/minio
+    # is the upstream registry, but quay has had recurring 502s — the
+    # mirror is more reliable on EKS where image pulls go through public
+    # internet). Pinned for reproducibility; bump to the latest stable
+    # on https://hub.docker.com/r/minio/minio/tags in production.
+    repository: docker.io/minio/minio
+    tag: "RELEASE.2024-08-17T01-24-54Z"
+    pullPolicy: IfNotPresent
+
+  # The MinIO bucket the bootstrap Job creates and the API uses for
+  # all logical (bucket, key) pairs. Multiple logical buckets share
+  # this single underlying bucket via key prefixes.
+  bucket: nightshift
+
+  # Root credentials for the in-cluster MinIO. MUST be supplied at
+  # install time (e.g. via --set-file minio.rootPassword=<file>);
+  # autogen via `lookup` is unsafe under helm template. The same
+  # Secret is wired into the API pod's envFrom so credentials never
+  # leave the cluster.
+  rootUser: nightshift
+  rootPassword: ""
+
+  replicas: 1
+
+  # Embedded MinIO Console — web UI for browsing buckets, exposed on a
+  # separate ClusterIP port. OFF by default; flip on for dev clusters
+  # (the kind quickstart enables it via Makefile so port-forward 9001
+  # gives you a browser dashboard alongside the S3 API on 9000).
+  # Keep OFF in production unless you've fronted the service with auth
+  # — the Console accepts the same root credentials as `mc`.
+  console:
+    enabled: false
+    port: 9001
+
+  storage:
+    size: 10Gi
+    storageClassName: ""
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+
+  # Image used by the post-install bootstrap Job to create the
+  # bucket. Same release cadence as the server. Mirrored on Docker
+  # Hub for the same reliability reason as the server image above.
+  mc:
+    repository: docker.io/minio/mc
+    tag: "RELEASE.2024-08-13T05-33-17Z"
+
+# Bundled in-cluster OpenBao acting as the OIDC identity provider for
+# nightshift-api (chunk 10a). Disabled by default — flip on for the
+# kind/k3d quick-start. For production, run a managed OpenBao/Vault or
+# an external IdP (Auth0, Okta, Dex, ...) and leave this off; configure
+# nightshift_api.auth.oidc.issuerUrl + .audience to point at it.
+#
+# When openbao.enabled, the chart:
+#   1. installs an OpenBao StatefulSet with file-Raft storage
+#   2. runs a post-install init Job that initializes + unseals OpenBao
+#   3. runs a post-install bootstrap Job that:
+#      - enables userpass + kubernetes + kv v2 auth/secret methods
+#      - writes nightshift-api + nightshift-worker policies
+#      - creates the OIDC key/scope/assignment/client/provider
+#      - publishes client_id + client_secret to a K8s Secret
+#   4. wires NS_OIDC_ISSUER_URL + NS_OIDC_AUDIENCE on nightshift-api
+#      from the OpenBao OIDC provider's discovery URL + the published
+#      client_id Secret.
+#
+# The OpenBao KV/secrets backend is NOT consumed by nightshift-api in
+# chunk 10 — that lands in chunk 12. The chunk-10 chart still uses the
+# file-mounted Secret at NS_SECRETS_FILE for static tokens + worker
+# HMAC. The bootstrap pre-provisions OpenBao policies + roles so chunk
+# 12 can switch backends without re-bootstrapping OpenBao.
+openbao:
+  enabled: false
+
+  # Enable the OpenBao web UI at /ui on the same listener. Off by
+  # default — operators only need it when doing identity/group
+  # management or break-glass debugging through a browser. Requires
+  # an ingress to be useful externally.
+  ui: false
+
+  image:
+    repository: ghcr.io/openbao/openbao
+    tag: "2.2.0"
+    pullPolicy: IfNotPresent
+
+  replicas: 1
+
+  storage:
+    size: 1Gi
+    storageClassName: ""
+
+  # Disable the openbao-init Job + unseal sidecar. Use only when the
+  # OpenBao container is configured for KMS/cloud auto-unseal upstream
+  # of the chart. Default false: chart manages init + unseal in-band.
+  autoUnseal:
+    enabled: false
+
+  oidc:
+    # OIDC issuer base — scheme + host + optional port, no path.
+    # OpenBao appends the canonical
+    # /v1/identity/oidc/provider/nightshift path itself; setting any
+    # path here is rejected at PUT time.
+    # Empty defaults to the in-cluster OpenBao Service endpoint
+    # (http://<svc>.<ns>.svc:8200). Override with the externally-
+    # resolvable hostname when deploying behind an ingress; tokens'
+    # `iss` claim and the discovery URL both use this value.
+    issuerURL: ""
+    # Human name of the OIDC client created in OpenBao. The
+    # auto-generated client_id (the actual OAuth audience) is published
+    # to the K8s Secret named below; the API consumes it via valueFrom.
+    clientName: nightshift-api
+    # Browser/CLI redirect URI registered with the OIDC client. Multiple
+    # values supported via clientRedirectURIs (comma-separated). Without
+    # a UI, the localhost default lets operators run a one-shot CLI
+    # flow against `openbao.<ns>.svc:8200`.
+    clientRedirectURI: "http://localhost:8080/callback"
+    clientRedirectURIs: ""
+    # Name of the K8s Secret the bootstrap Job populates with
+    # client_id + client_secret. Consumed by the API StatefulSet via
+    # valueFrom.
+    clientSecretRef: openbao-oidc-client
+
+    # Browser-facing OpenBao base URL. Used by the UI's
+    # OIDC_AUTHORIZATION_URL (the authorize-redirect target the
+    # browser follows). Token + userinfo URLs are server-side calls
+    # from the UI's Next.js process and stay on the in-cluster
+    # service. Empty defaults to issuerURL or the in-cluster service
+    # endpoint. For dev port-forward set to http://localhost:<port>.
+    publicEndpoint: ""
+
+    # Chunk 19: when ui.enabled=true, the bootstrap also provisions a
+    # second OIDC client for the UI. Different redirect URI (the UI's
+    # better-auth callback path) + separate Secret so credentials don't
+    # leak across components.
+    uiClientName: nightshift-ui
+    # Operator overrides this to the UI's externally-resolvable URL +
+    # /api/auth/callback/openbao. Empty disables UI client provisioning.
+    uiClientRedirectURI: ""
+    uiClientSecretRef: openbao-oidc-ui-client
+
+  # Optional initial admin seed user. When both fields are non-empty,
+  # the bootstrap Job creates a userpass user + admin group membership
+  # so an operator can mint id_tokens immediately. Skip in production
+  # — federate from your real IdP instead.
+  # When openbao.enabled, the bootstrap Job creates a userpass user
+  # `username` with `password`, links it to an identity entity, and
+  # adds it to the `admin` group (which carries the nightshift-admin
+  # policy → can manage userpass + identity + group membership). The
+  # chart writes the credentials to the Secret named below; the
+  # bootstrap reads from there via valueFrom so the password never
+  # appears in helm templates / etcd in plain text.
+  #
+  # Default username is `admin`. Default password is empty; when empty,
+  # the chart generates a random 24-char password on first install
+  # (helm.sh/resource-policy: keep so it survives upgrades). The
+  # operator retrieves the value once with:
+  #   kubectl -n <ns> get secret openbao-admin-seed -o jsonpath='{.data.password}' | base64 -d
+  #
+  # Skip the seed entirely by setting username="" — appropriate when
+  # federating from a real IdP and not relying on local userpass.
+  adminSeed:
+    username: "admin"
+    password: ""
+
+  resources:
+    api:
+      requests: { cpu: "100m", memory: "256Mi" }
+      limits:   { cpu: "1",    memory: "1Gi" }
+    unseal:
+      requests: { cpu: "10m",  memory: "32Mi" }
+      limits:   { cpu: "100m", memory: "128Mi" }
+
+  # OAuth dispenser plumbing: there is no chart-level toggle. The API's
+  # OAuth dispenser is always the in-process Native client
+  # (internal/oauth/native.go) — OAuth 2.0 + PKCE/S256, refresh on Get
+  # with a 60s pre-expiry skew, all storage delegated to the secrets
+  # backend at secret/nightshift/oauth-{servers,pending,tokens}/. No
+  # separate OpenBao plugin is installed or required.
+  #
+  # Architecture: the API consumes two interfaces — oauth.OAuthDispenser
+  # and secrets.Secrets — both pinned by compliance suites. Native is
+  # the canonical OAuthDispenser; pluggability lives at the secrets
+  # layer below it. To add a new secrets backend (HCP Vault, K8s
+  # Secrets, etc.):
+  #   1. Implement the secrets.Secrets interface in internal/secrets/.
+  #   2. Pass the secrets compliance suite (internal/secrets/
+  #      compliance_test.go).
+  #   3. Add a case to buildConfigSecrets in cmd/nightshift-api/main.go.
+  #   4. Add a corresponding NS_SECRETS_BACKEND value.
+  # Native receives the new backend transparently; OAuth code does not
+  # change.
+
+# ── Chunk 19: optional UI ─────────────────────────────────────────────
+#
+# A Next.js UI (cmd/nightshift-ui) that serves the agent control plane
+# console. Talks to the API via in-cluster service DNS. Auth via OpenBao
+# OIDC + better-auth session storage in a PVC-backed sqlite. Default
+# off — operators flip ui.enabled=true to deploy the UI alongside.
+ui:
+  enabled: false
+  image:
+    repository: nightshift-ui
+    tag: ""  # falls back to .Values.image.tag
+    pullPolicy: IfNotPresent
+  replicas: 1
+
+  # Persistent sqlite for better-auth session state. 1Gi is plenty for
+  # tens of thousands of sessions.
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+
+  # Email + password fallback (when set, better-auth lets users
+  # register/login locally — useful for dev / when OIDC is misconfigured).
+  emailPasswordFallback: false
+
+  # Extra origins to trust for cross-site requests. Better-auth
+  # rejects any login/callback whose Origin header doesn't match
+  # BETTER_AUTH_URL (derived from ingress.host) or one of these.
+  # Common use: add `http://localhost:3000` (or whatever port you
+  # port-forward to) when developing the UI from a kubectl port-
+  # forward. List values are joined into BETTER_AUTH_TRUSTED_ORIGINS
+  # comma-separated.
+  trustedOrigins: []
+  #  - http://localhost:3000
+  #  - https://other.example.com
+
+  # Browser-facing URL of the UI. Used as BETTER_AUTH_URL and as the
+  # base for the OIDC redirect URI registered with OpenBao
+  # (publicURL + /api/auth/oauth2/callback/openbao). Defaults to
+  # https://<ingress.host> when empty; for dev port-forwards set to
+  # http://localhost:<port>. Must be reachable from the user's
+  # browser AND match what the OIDC client has registered.
+  publicURL: ""
+
+  # Ingress for the UI. Disabled by default; operator supplies host
+  # when ready. The UI's BETTER_AUTH_URL + the OIDC redirect URI both
+  # derive from this host.
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    # Free-form ingress annotations. Merged with the cert-manager
+    # annotation (below) when clusterIssuer is set.
+    annotations: {}
+    # When non-empty, the template renders
+    # `cert-manager.io/cluster-issuer: <value>` and auto-populates the
+    # `tls:` section with `secretName: <fullname>-tls` (operator-overridable
+    # via `tls.secretName`). Leave empty when cert-manager isn't in use.
+    clusterIssuer: ""
+    tls:
+      secretName: ""
+
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi" }

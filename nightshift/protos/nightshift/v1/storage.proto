@@ -1,0 +1,457 @@
+// Nightshift Storage interface — the persistence foundation.
+//
+// Storage defines the primitives through which all durable state in a
+// Nightshift control plane is persisted: structured records (runs,
+// events, user configs, skills, agents, connectors, billing, artifact
+// metadata) as Records, and unstructured blob bytes (artifact content,
+// warehouse data, session state) as Objects.
+//
+// Domain services (Artifacts in chunk 3, Config in chunk 4, Workers in
+// chunk 6) are thin layers over this service. Conforming implementations
+// provide a single Storage backend that covers both primitives — for
+// example SQLite + local disk for development, Postgres + S3 for
+// production, or DynamoDB + R2 for AWS.
+syntax = "proto3";
+
+package nightshift.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/nightshiftco/nightshift/gen/go/nightshift/v1;nightshiftv1";
+
+// UploadState is the lifecycle state of an Object during and after
+// upload.
+enum UploadState {
+  // The upload state is unknown. This is the proto3 default and should
+  // not be returned by conforming implementations.
+  UPLOAD_STATE_UNSPECIFIED = 0;
+
+  // The object has been registered via InitiateObjectUpload but no bytes
+  // have been confirmed yet. Implementations should garbage-collect
+  // PENDING objects that are not finalized within an implementation-
+  // defined window.
+  UPLOAD_STATE_PENDING = 1;
+
+  // The object upload has been finalized and the bytes are durable.
+  // GetObjectDownloadURL will return a presigned URL.
+  UPLOAD_STATE_READY = 2;
+
+  // The object upload failed and the bytes are not durable. Implementations
+  // should garbage-collect FAILED objects eventually.
+  UPLOAD_STATE_FAILED = 3;
+}
+
+// Record is a single structured entry in a named collection. Records are
+// the structured-KV half of Storage. Every piece of control-plane state
+// that is not a blob — runs, events, user configs, skills, agents,
+// connectors, billing events, schedules, artifact metadata — is a Record.
+//
+// The (collection, key) pair is the primary identity. Attributes are the
+// indexed, filterable metadata used by ListRecords. Data is an opaque
+// payload whose format is decided by the caller (typically serialized
+// protobuf or JSON, hinted by content_type). The version field enables
+// optimistic concurrency on mutations.
+message Record {
+  // Opaque collection name (for example "runs", "events", "skills").
+  // Collections are not declared in the spec; domain services and
+  // implementations name their own.
+  string collection = 1;
+
+  // Primary key within the collection. Opaque to Storage; meaningful to
+  // the caller.
+  string key = 2;
+
+  // Indexed key/value attributes used by ListRecords for filtering and
+  // ordering. Storage guarantees attributes are queryable; the data
+  // blob is not.
+  map<string, string> attributes = 3;
+
+  // Opaque payload. Format is caller-defined and hinted by content_type.
+  bytes data = 4;
+
+  // MIME-ish hint describing how to decode data (for example
+  // "application/x-protobuf", "application/json", "text/plain"). Storage
+  // does not validate the payload shape.
+  string content_type = 5;
+
+  // Monotonic version number assigned by Storage on every write. Used
+  // with PutRecord and DeleteRecord if_version fields for optimistic
+  // concurrency.
+  int64 version = 6;
+
+  // Time the record was first created.
+  google.protobuf.Timestamp created_at = 7;
+
+  // Time the record was most recently updated.
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// Object is a blob of bytes identified by (bucket, key) and served via
+// presigned URLs. Objects are the unstructured half of Storage.
+message Object {
+  // Logical grouping of objects, pre-created out of band by operators.
+  // Implementations map buckets to S3 buckets, GCS buckets, MinIO
+  // buckets, filesystem directories, or any other backend-specific
+  // concept.
+  string bucket = 1;
+
+  // Path within the bucket. May contain slashes for hierarchical keys.
+  string key = 2;
+
+  // MIME type of the object content.
+  string content_type = 3;
+
+  // Size of the object in bytes, as reported by the backend after
+  // finalization.
+  int64 size_bytes = 4;
+
+  // Implementation-defined content identity. Typically the S3/GCS ETag
+  // or a content hash. Opaque to the spec.
+  string etag = 5;
+
+  // User-defined metadata preserved by the implementation alongside the
+  // object.
+  map<string, string> metadata = 6;
+
+  // Upload state. Only READY objects are durable.
+  UploadState upload_state = 7;
+
+  // Time the object was first created (typically at
+  // InitiateObjectUpload).
+  google.protobuf.Timestamp created_at = 8;
+
+  // Time the object was most recently updated or finalized.
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+// -----------------------------------------------------------------------------
+// Record RPCs
+// -----------------------------------------------------------------------------
+
+// PutRecordRequest is the request message for PutRecord.
+message PutRecordRequest {
+  // Target collection.
+  string collection = 1;
+
+  // Primary key within the collection.
+  string key = 2;
+
+  // Indexed attributes for filtering and ordering.
+  map<string, string> attributes = 3;
+
+  // Opaque payload bytes.
+  bytes data = 4;
+
+  // MIME-ish hint describing how to decode data.
+  string content_type = 5;
+
+  // Optional optimistic-concurrency check. When set, the RPC fails with
+  // FAILED_PRECONDITION if the current version of the record does not
+  // match this value. Use 0 to require that the record does not yet
+  // exist.
+  int64 if_version = 6;
+
+  // Optional idempotency key. Replay-safe mutations — the same key from
+  // the same caller within the implementation-defined window returns
+  // the original response.
+  string idempotency_key = 7;
+}
+
+// PutRecordResponse is the response message for PutRecord.
+message PutRecordResponse {
+  // The written record, including the server-assigned version and
+  // timestamps.
+  Record record = 1;
+}
+
+// GetRecordRequest is the request message for GetRecord.
+message GetRecordRequest {
+  // Target collection.
+  string collection = 1;
+
+  // Primary key within the collection.
+  string key = 2;
+}
+
+// GetRecordResponse is the response message for GetRecord.
+message GetRecordResponse {
+  // The requested record.
+  Record record = 1;
+}
+
+// DeleteRecordRequest is the request message for DeleteRecord.
+message DeleteRecordRequest {
+  // Target collection.
+  string collection = 1;
+
+  // Primary key within the collection.
+  string key = 2;
+
+  // Optional optimistic-concurrency check. See PutRecordRequest.if_version.
+  int64 if_version = 3;
+}
+
+// DeleteRecordResponse is the response message for DeleteRecord. It is
+// intentionally empty.
+message DeleteRecordResponse {}
+
+// ListRecordsRequest is the request message for ListRecords.
+message ListRecordsRequest {
+  // Target collection.
+  string collection = 1;
+
+  // Optional exact-match filters over indexed attributes. Multiple
+  // filters are combined with logical AND. Only exact-match is
+  // supported in v1; range queries and JOINs are out of scope.
+  map<string, string> attribute_filters = 2;
+
+  // Maximum number of records to return. The server may cap the value.
+  int32 page_size = 3;
+
+  // Opaque pagination token from a previous ListRecordsResponse.
+  string page_token = 4;
+
+  // Implementation-defined order specification. Conventional format is
+  // "<field> <asc|desc>", for example "created_at desc". Empty string
+  // means implementation-default order.
+  string order_by = 5;
+}
+
+// ListRecordsResponse is the response message for ListRecords.
+message ListRecordsResponse {
+  // Matching records on this page.
+  repeated Record records = 1;
+
+  // Opaque pagination token. Empty when there are no further results.
+  string next_page_token = 2;
+}
+
+// -----------------------------------------------------------------------------
+// Object RPCs
+// -----------------------------------------------------------------------------
+
+// InitiateObjectUploadRequest is the request message for
+// InitiateObjectUpload.
+message InitiateObjectUploadRequest {
+  // Target bucket.
+  string bucket = 1;
+
+  // Target key within the bucket.
+  string key = 2;
+
+  // MIME type the client will upload.
+  string content_type = 3;
+
+  // Expected size of the object in bytes. The server may reject uploads
+  // that exceed this value at finalization time.
+  int64 size_bytes = 4;
+
+  // User-defined metadata to be preserved alongside the object.
+  map<string, string> metadata = 5;
+
+  // Optional idempotency key.
+  string idempotency_key = 6;
+}
+
+// InitiateObjectUploadResponse is the response message for
+// InitiateObjectUpload.
+message InitiateObjectUploadResponse {
+  // The registered object in PENDING state.
+  Object object = 1;
+
+  // Presigned URL the client must PUT the bytes to directly.
+  string upload_url = 2;
+
+  // Headers the client must include on the PUT request, typically
+  // including Content-Type and any signature-related headers required
+  // by the backend.
+  map<string, string> upload_headers = 3;
+
+  // When the presigned URL and any required headers become invalid.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// FinalizeObjectUploadRequest is the request message for
+// FinalizeObjectUpload.
+message FinalizeObjectUploadRequest {
+  // Target bucket.
+  string bucket = 1;
+
+  // Target key within the bucket.
+  string key = 2;
+}
+
+// FinalizeObjectUploadResponse is the response message for
+// FinalizeObjectUpload.
+message FinalizeObjectUploadResponse {
+  // The finalized object in READY state.
+  Object object = 1;
+}
+
+// GetObjectRequest is the request message for GetObject.
+message GetObjectRequest {
+  // Target bucket.
+  string bucket = 1;
+
+  // Target key within the bucket.
+  string key = 2;
+}
+
+// GetObjectResponse is the response message for GetObject.
+message GetObjectResponse {
+  // The requested object's metadata. Bytes are not returned; use
+  // GetObjectDownloadURL to fetch bytes.
+  Object object = 1;
+}
+
+// GetObjectDownloadURLRequest is the request message for
+// GetObjectDownloadURL.
+message GetObjectDownloadURLRequest {
+  // Target bucket.
+  string bucket = 1;
+
+  // Target key within the bucket.
+  string key = 2;
+}
+
+// GetObjectDownloadURLResponse is the response message for
+// GetObjectDownloadURL.
+message GetObjectDownloadURLResponse {
+  // Presigned URL the client can GET to fetch the object bytes directly.
+  string download_url = 1;
+
+  // When the presigned URL becomes invalid.
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+// DeleteObjectRequest is the request message for DeleteObject.
+message DeleteObjectRequest {
+  // Target bucket.
+  string bucket = 1;
+
+  // Target key within the bucket.
+  string key = 2;
+}
+
+// DeleteObjectResponse is the response message for DeleteObject. It is
+// intentionally empty.
+message DeleteObjectResponse {}
+
+// ListObjectsRequest is the request message for ListObjects.
+message ListObjectsRequest {
+  // Target bucket.
+  string bucket = 1;
+
+  // Optional key prefix. Only objects whose key starts with this prefix
+  // are returned.
+  string key_prefix = 2;
+
+  // Maximum number of objects to return. The server may cap the value.
+  int32 page_size = 3;
+
+  // Opaque pagination token from a previous ListObjectsResponse.
+  string page_token = 4;
+}
+
+// ListObjectsResponse is the response message for ListObjects.
+message ListObjectsResponse {
+  // Matching objects on this page.
+  repeated Object objects = 1;
+
+  // Opaque pagination token. Empty when there are no further results.
+  string next_page_token = 2;
+}
+
+// -----------------------------------------------------------------------------
+// Service
+// -----------------------------------------------------------------------------
+
+// Storage is the persistence foundation of Nightshift. It exposes two
+// primitives — Record and Object — that together cover all durable state
+// in a conforming control plane. Domain services layer on top of Storage
+// by persisting their state as Records and Objects in named collections
+// and buckets.
+service Storage {
+  // PutRecord writes a record to a collection. Uses optimistic
+  // concurrency when if_version is set.
+  rpc PutRecord(PutRecordRequest) returns (PutRecordResponse) {
+    option (google.api.http) = {
+      post: "/v1/records/{collection}/{key}"
+      body: "*"
+    };
+  }
+
+  // GetRecord reads a single record by collection and key.
+  rpc GetRecord(GetRecordRequest) returns (GetRecordResponse) {
+    option (google.api.http) = {
+      get: "/v1/records/{collection}/{key}"
+    };
+  }
+
+  // DeleteRecord removes a record. Uses optimistic concurrency when
+  // if_version is set.
+  rpc DeleteRecord(DeleteRecordRequest) returns (DeleteRecordResponse) {
+    option (google.api.http) = {
+      delete: "/v1/records/{collection}/{key}"
+    };
+  }
+
+  // ListRecords returns records from a collection, optionally filtered
+  // by attributes, paginated, and ordered.
+  rpc ListRecords(ListRecordsRequest) returns (ListRecordsResponse) {
+    option (google.api.http) = {
+      get: "/v1/records/{collection}"
+    };
+  }
+
+  // InitiateObjectUpload reserves an Object in PENDING state and returns
+  // a presigned URL the client should PUT bytes to directly.
+  rpc InitiateObjectUpload(InitiateObjectUploadRequest) returns (InitiateObjectUploadResponse) {
+    option (google.api.http) = {
+      post: "/v1/objects:initiateUpload"
+      body: "*"
+    };
+  }
+
+  // FinalizeObjectUpload transitions an Object from PENDING to READY
+  // after the client has successfully PUT the bytes to the presigned
+  // URL.
+  rpc FinalizeObjectUpload(FinalizeObjectUploadRequest) returns (FinalizeObjectUploadResponse) {
+    option (google.api.http) = {
+      post: "/v1/objects/{bucket}/{key=**}:finalizeUpload"
+      body: "*"
+    };
+  }
+
+  // GetObject reads an Object's metadata. It does not return bytes; use
+  // GetObjectDownloadURL to read bytes.
+  rpc GetObject(GetObjectRequest) returns (GetObjectResponse) {
+    option (google.api.http) = {
+      get: "/v1/objects/{bucket}/{key=**}"
+    };
+  }
+
+  // GetObjectDownloadURL returns a presigned URL the client can GET to
+  // fetch the bytes of a READY object directly.
+  rpc GetObjectDownloadURL(GetObjectDownloadURLRequest) returns (GetObjectDownloadURLResponse) {
+    option (google.api.http) = {
+      get: "/v1/objects/{bucket}/{key=**}:downloadUrl"
+    };
+  }
+
+  // DeleteObject removes an Object.
+  rpc DeleteObject(DeleteObjectRequest) returns (DeleteObjectResponse) {
+    option (google.api.http) = {
+      delete: "/v1/objects/{bucket}/{key=**}"
+    };
+  }
+
+  // ListObjects returns objects from a bucket, optionally filtered by
+  // key prefix and paginated.
+  rpc ListObjects(ListObjectsRequest) returns (ListObjectsResponse) {
+    option (google.api.http) = {
+      get: "/v1/objects"
+    };
+  }
+}

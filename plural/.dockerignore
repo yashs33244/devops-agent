@@ -1,0 +1,17 @@
+_build/
+deps/
+charts/
+.vscode/
+log/
+.gitignore
+.dockerignore
+Dockerfile*
+apps/watchman/Dockerfile
+Makefile
+README*
+test/
+priv/static/
+creds/
+www/
+ai/
+.github/

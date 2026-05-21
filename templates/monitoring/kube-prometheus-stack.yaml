@@ -1,0 +1,30 @@
+# Add this to your Terraform to deploy full monitoring stack
+resource "helm_release" "kube_prometheus_stack" {
+  count            = var.enable_monitoring ? 1 : 0
+  name             = "kube-prometheus-stack"
+  repository       = "https://prometheus-community.github.io/helm-charts"
+  chart            = "kube-prometheus-stack"
+  namespace        = "monitoring"
+  create_namespace = true
+  version          = "65.1.1"
+
+  set {
+    name  = "grafana.adminPassword"
+    value = var.grafana_admin_password
+  }
+
+  set {
+    name  = "grafana.sidecar.dashboards.enabled"
+    value = "true"
+  }
+
+  set {
+    name  = "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues"
+    value = "false"
+  }
+
+  set {
+    name  = "prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues"
+    value = "false"
+  }
+}

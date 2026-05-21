@@ -1,0 +1,56 @@
+{{- $name := include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-api") }}
+{{- $ns := include "nightshift.workerNamespace" . }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nightshift-api
+rules:
+  # The Workers service launches, observes, and tears down worker Jobs.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Pods are read (to interrupt runs) and listed (to reconcile state
+  # on restart). No create/exec on pods directly — workers are owned
+  # by the Jobs above, which manage their pods.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  # Chunk 16: app artifacts deploy nginx pods. The Artifacts service
+  # creates a Deployment + ClusterIP Service per app, patches them to
+  # roll out updated HTML, and deletes them on artifact deletion.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "get", "list", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "delete"]
+  # Chunk 17: Scheduling materializes each Schedule as a K8s CronJob.
+  # The Service creates/updates/deletes them and lists them at startup
+  # for reconciliation.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nightshift-api
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}

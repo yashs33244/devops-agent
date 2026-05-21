@@ -1,0 +1,24 @@
+{{- if .Values.nightshift_api.sessionState.pvc.enabled }}
+{{- /* Shared RWX PVC backing per-session SDK state for chunk 13.
+       Mounted into the API pod (full root, for DeleteSession cleanup)
+       and worker pods (subPath-scoped to <user_id>/<session_id>).
+       Requires a CSI driver that supports ReadWriteMany. */}}
+{{- $name := printf "%s-session-state" (include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-api")) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-state
+spec:
+  accessModes:
+    {{- toYaml .Values.nightshift_api.sessionState.pvc.accessModes | nindent 4 }}
+  {{- with .Values.nightshift_api.sessionState.pvc.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.nightshift_api.sessionState.pvc.size | quote }}
+{{- end }}

@@ -1,0 +1,247 @@
+fragment Limit on Limit {
+  dimension
+  quantity
+}
+
+fragment LineItem on LineItem {
+  name
+  dimension
+  cost
+  period
+  type
+}
+
+fragment ServiceLevel on ServiceLevel {
+  minSeverity
+  maxSeverity
+  responseTime
+}
+
+fragment Plan on Plan {
+  id
+  name
+  cost
+  period
+  serviceLevels {
+    ...ServiceLevel
+  }
+  lineItems {
+    included {
+      ...Limit
+    }
+    items {
+      ...LineItem
+    }
+  }
+  metadata {
+    features {
+      name
+      description
+    }
+  }
+}
+
+fragment Subscription on RepositorySubscription {
+  id
+  plan {
+    ...Plan
+  }
+  lineItems {
+    items {
+      ...Limit
+    }
+  }
+}
+
+fragment InvoiceItem on InvoiceItem {
+  amount
+  currency
+  description
+}
+
+fragment PaymentIntent on PaymentIntent {
+  id
+  description
+  clientSecret
+  amount
+  captureMethod
+  currency
+  nextAction {
+    ...NextAction
+  }
+  status
+}
+
+fragment NextAction on NextAction {
+  type
+  redirectToUrl {
+    url
+    returnUrl
+  }
+}
+
+fragment Invoice on Invoice {
+  number
+  amountDue
+  amountPaid
+  currency
+  status
+  createdAt
+  hostedInvoiceUrl
+  lines {
+    ...InvoiceItem
+  }
+}
+
+fragment Card on Card {
+  last4
+  expMonth
+  expYear
+  name
+  brand
+}
+
+fragment PlatformPlan on PlatformPlan {
+  id
+  name
+  cost
+  period
+  enterprise
+  trial
+  features {
+    vpn
+    userManagement
+    audit
+  }
+  lineItems {
+    name
+    dimension
+    cost
+    period
+  }
+}
+
+fragment SubscriptionAccount on Account {
+  id
+  billingCustomerId
+  grandfatheredUntil
+  delinquentAt
+  userCount
+  clusterCount
+  trialed
+  availableFeatures {
+    userManagement
+    audit
+  }
+  subscription {
+    id
+    trialUntil
+    plan {
+      ...PlatformPlan
+    }
+  }
+  billingAddress {
+    name
+    line1
+    line2
+    zip
+    state
+    city
+    country
+  }
+  paymentMethods(first: 20) {
+    edges {
+      node {
+        ...PaymentMethod
+      }
+    }
+  }
+}
+
+query Subscription {
+  account {
+    ...SubscriptionAccount
+  }
+}
+
+mutation UpdateAccountBilling($attributes: AccountAttributes!) {
+  updateAccount(attributes: $attributes) {
+    id
+  }
+}
+
+mutation DowngradeToFreePlanMutation {
+  deletePlatformSubscription {
+    id
+  }
+}
+
+query Cards {
+  me {
+    id
+    cards(first: 100) {
+      edges {
+        node {
+          ...Card
+        }
+      }
+    }
+  }
+}
+
+fragment SetupIntent on SetupIntent {
+  id
+  status
+  clientSecret
+  nextAction {
+    ...NextAction
+  }
+  paymentMethodTypes
+}
+
+mutation SetupIntent($address: AddressAttributes!) {
+  setupIntent(address: $address) {
+    ...SetupIntent
+  }
+}
+
+fragment PaymentMethod on PaymentMethod {
+  id
+  type
+  isDefault
+  card {
+    ...Card
+  }
+}
+
+mutation InitiateCheckout {
+  initiateCheckout {
+    url
+  }
+}
+
+mutation FinalizeCheckout($sessionId: String!) {
+  finalizeCheckout(sessionId: $sessionId) {
+    id
+  }
+}
+
+mutation DefaultPaymentMethod($id: String!) {
+  defaultPaymentMethod(id: $id)
+}
+
+mutation DeletePaymentMethod($id: ID!) {
+  deletePaymentMethod(id: $id) {
+    ...PaymentMethod
+  }
+}
+
+query Invoices {
+  invoices(first: 500) {
+    edges {
+      node {
+        ...Invoice
+      }
+    }
+  }
+}

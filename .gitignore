@@ -1,0 +1,110 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ─── Node / Next.js ───────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.nuxt/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ─── Go ───────────────────────────────────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.dylib
+*.test
+*.out
+vendor/
+
+# ─── Terraform ────────────────────────────────────────────────────────────────
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+*.tfplan
+terraform.tfvars
+!terraform.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+crash.log
+crash.*.log
+
+# ─── Helm ─────────────────────────────────────────────────────────────────────
+*.tgz
+charts/*/charts/
+charts/*/tmpcharts/
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+.dockerignore.local
+
+# ─── Kubernetes / secrets ─────────────────────────────────────────────────────
+**/secrets/*.yaml
+!**/secrets/*-template.yaml
+!**/secrets/github-secrets.md
+!**/secrets/secrets-checklist.md
+kubeconfig
+*.kubeconfig
+
+# ─── Cloud credentials (never commit) ────────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials
+credentials.json
+service-account*.json
+*-sa-key.json
+
+# ─── Workspace (cloned repos, generated output) ───────────────────────────────
+workspace/*/
+!workspace/.gitkeep
+
+# ─── Testing artefacts ────────────────────────────────────────────────────────
+.coverage
+coverage/
+coverage.xml
+htmlcov/
+.pytest_cache/
+junit*.xml
+test-results/
+*.sarif
+
+# ─── IDE / OS ─────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/

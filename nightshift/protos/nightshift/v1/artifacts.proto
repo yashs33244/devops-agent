@@ -1,0 +1,662 @@
+// Nightshift Artifacts interface — agent-produced outputs with sharing
+// and deployment semantics.
+//
+// Artifacts are a domain service built on top of Storage. See artifacts.md adjacent to this file for more detail.
+//
+syntax = "proto3";
+
+package nightshift.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/nightshiftco/nightshift/gen/go/nightshift/v1;nightshiftv1";
+
+// ArtifactType distinguishes object artifacts (blob content served via
+// download URL) from app artifacts (static sites served as a hosted
+// workload).
+enum ArtifactType {
+  // Proto3 default. Conforming implementations should not return this.
+  ARTIFACT_TYPE_UNSPECIFIED = 0;
+
+  // Binary blob identified by a Storage Object.
+  ARTIFACT_TYPE_OBJECT = 1;
+
+  // Hosted static site deployed as a workload in the implementation's
+  // runtime.
+  ARTIFACT_TYPE_APP = 2;
+}
+
+// ArtifactRole is the permission level granted to a user on an artifact.
+enum ArtifactRole {
+  // Proto3 default. Conforming implementations should not return this.
+  ARTIFACT_ROLE_UNSPECIFIED = 0;
+
+  // Read-only access. May download / view / preview.
+  ARTIFACT_ROLE_VIEWER = 1;
+
+  // Read + update access. May call UpdateArtifact. May not share,
+  // delete, or toggle public/private.
+  ARTIFACT_ROLE_EDITOR = 2;
+
+  // Full control. Implicit on the creator and may not be granted via
+  // ShareArtifact in v1.
+  ARTIFACT_ROLE_OWNER = 3;
+}
+
+// DeploymentState is the lifecycle of an app artifact's hosted workload.
+enum DeploymentState {
+  // Proto3 default. Conforming implementations should not return this
+  // for app artifacts once the initial deploy has started.
+  DEPLOYMENT_STATE_UNSPECIFIED = 0;
+
+  // The deploy has been accepted and the workload is being created.
+  DEPLOYMENT_STATE_PENDING = 1;
+
+  // The workload is reachable at `app_url`.
+  DEPLOYMENT_STATE_READY = 2;
+
+  // The most recent deploy or update failed. `app_status_detail` carries
+  // an implementation-specific reason.
+  DEPLOYMENT_STATE_FAILED = 3;
+}
+
+// ArtifactEventType is the discriminator for worker-emitted artifact
+// lifecycle events. Workers post these events through the Workers
+// streaming interface so frontends can react in real time.
+enum ArtifactEventType {
+  // Proto3 default. Conforming implementations should not emit this.
+  ARTIFACT_EVENT_TYPE_UNSPECIFIED = 0;
+
+  // An artifact of either type was newly created. Emitted immediately
+  // after the artifact record is persisted, before bytes or deployment
+  // have necessarily settled.
+  //
+  // Wire string: "artifact.created".
+  ARTIFACT_EVENT_TYPE_CREATED = 1;
+
+  // An existing artifact was modified via UpdateArtifact (content,
+  // metadata, or visibility).
+  //
+  // Wire string: "artifact.updated".
+  ARTIFACT_EVENT_TYPE_UPDATED = 2;
+
+  // An app artifact finished deploying and reached DEPLOYMENT_STATE_READY.
+  // Distinct from CREATED because the initial CreateAppArtifact response
+  // may return before the hosted workload is live.
+  //
+  // Wire string: "artifact.app_deployed".
+  ARTIFACT_EVENT_TYPE_APP_DEPLOYED = 3;
+}
+
+// Artifact is the metadata record for an agent-produced or user-uploaded
+// output. The blob bytes (for objects) and the hosted workload (for
+// apps) live elsewhere; this message describes what, who, and where.
+message Artifact {
+  // Server-assigned identifier. Stable for the lifetime of the artifact.
+  string id = 1;
+
+  // Whether this artifact is an object (blob) or an app (hosted static
+  // site).
+  ArtifactType type = 2;
+
+  // Human-readable display name. For object artifacts this is typically
+  // the filename.
+  string name = 3;
+
+  // Optional short description supplied by the creator.
+  string description = 4;
+
+  // Identifier of the user who created the artifact. Treated opaquely;
+  // implementations bind it to their auth identity model.
+  string owner_id = 5;
+
+  // Identifier of the run during which this artifact was produced, or
+  // empty if the artifact was created outside a run (for example via a
+  // direct user upload).
+  string run_id = 6;
+
+  // When false (default) access is gated by ownership + permission
+  // grants. When true, access is unauthenticated.
+  bool public = 7;
+
+  // Object-only: the Storage Object holding the blob bytes. Empty for
+  // app artifacts.
+  string object_bucket = 8;
+  string object_key = 9;
+
+  // Object-only: MIME type of the blob bytes. Empty for app artifacts.
+  string content_type = 10;
+
+  // Object-only: size of the blob in bytes, as reported by Storage
+  // after finalization. Zero for app artifacts.
+  int64 size_bytes = 11;
+
+  // Object-only: whether a companion preview HTML was uploaded to the
+  // implementation's preview key convention for this artifact. When
+  // true, GetArtifactPreviewURL will return a URL.
+  bool has_preview = 12;
+
+  // App-only: URL at which the hosted workload serves content. For
+  // private apps this is the implementation's permission-gated proxy
+  // URL; for public apps this is the public ingress URL. Empty for
+  // object artifacts.
+  string app_url = 13;
+
+  // App-only: deployment lifecycle state. DEPLOYMENT_STATE_UNSPECIFIED
+  // for object artifacts.
+  DeploymentState app_status = 14;
+
+  // App-only: optional free-form reason string accompanying FAILED
+  // state.
+  string app_status_detail = 15;
+
+  // Time the artifact record was first created.
+  google.protobuf.Timestamp created_at = 16;
+
+  // Time the artifact record was most recently updated.
+  google.protobuf.Timestamp updated_at = 17;
+
+  // Workers session this artifact is attached to, or empty. Typically
+  // set on user-uploaded artifacts and left empty on worker-produced
+  // artifacts (which are scoped via run_id).
+  string session_id = 18;
+}
+
+// ArtifactPermission is a single (artifact_id, user_id, role) grant. At
+// most one permission per (artifact_id, user_id) pair exists at any
+// time; re-granting a role replaces the prior grant.
+message ArtifactPermission {
+  // Server-assigned identifier for this grant.
+  string id = 1;
+
+  // The artifact this grant applies to.
+  string artifact_id = 2;
+
+  // The user the grant is made to.
+  string user_id = 3;
+
+  // The role granted. The implicit owner grant is not represented as a
+  // row and will not be returned by ListArtifactPermissions.
+  ArtifactRole role = 4;
+
+  // When the grant was created.
+  google.protobuf.Timestamp granted_at = 5;
+}
+
+// ArtifactEvent is the payload workers emit through the Workers
+// streaming events interface on artifact lifecycle transitions.
+//
+// Conforming Workers implementations forward these events unchanged to
+// any streaming subscriber of the enclosing run, so that frontends can
+// render inline previews and update artifact lists in real time.
+message ArtifactEvent {
+  // Lifecycle transition being reported.
+  ArtifactEventType type = 1;
+
+  // Affected artifact identifier.
+  string artifact_id = 2;
+
+  // Type of the affected artifact (object or app).
+  ArtifactType artifact_type = 3;
+
+  // Display name of the affected artifact at the time of the event.
+  string name = 4;
+
+  // URL the frontend should use to view this artifact. For object
+  // artifacts this is typically the implementation's permission-gated
+  // view path; for app artifacts this is `app_url`.
+  string url = 5;
+
+  // Object-only: MIME type of the affected artifact. Empty for app
+  // artifacts.
+  string content_type = 6;
+
+  // When the transition occurred.
+  google.protobuf.Timestamp occurred_at = 7;
+}
+
+// CreateObjectArtifactRequest is the request message for
+// CreateObjectArtifact. The caller supplies blob bytes inline; the
+// implementation is responsible for persisting them as a Storage
+// Object.
+//
+// This shape is a deliberate convenience for workers that produce small
+// artifacts (reports, images, JSON documents) in-memory. Large uploads
+// that benefit from presigned URLs should call Storage's
+// InitiateObjectUpload / FinalizeObjectUpload directly and then invoke
+// a future `RegisterObjectArtifact` variant; v1 of this spec does not
+// define that RPC.
+message CreateObjectArtifactRequest {
+  // Display name / filename for the artifact (for example
+  // "Q1-summary.pdf"). Extensions are part of the name; Storage does
+  // not infer MIME types from them.
+  string name = 1;
+
+  // Optional human description.
+  string description = 2;
+
+  // The blob bytes. The implementation stores them as a Storage Object
+  // under an implementation-defined (bucket, key) convention.
+  bytes content = 3;
+
+  // MIME type of `content`.
+  string content_type = 4;
+
+  // Creator user id. Implementations may derive this from auth context
+  // and ignore the field; worker callers supply it explicitly.
+  string owner_id = 5;
+
+  // Run during which this artifact was produced, or empty.
+  string run_id = 6;
+
+  // Initial visibility. Defaults to false (private).
+  bool public = 7;
+
+  // Optional companion HTML rendering of the same content. When
+  // provided, implementations upload it to their preview-key convention
+  // so GetArtifactPreviewURL returns a usable URL. Used by agent
+  // report generators (PDF/DOCX/XLSX/PPTX) to ship an inline-viewable
+  // preview alongside the native binary format.
+  bytes preview_html = 8;
+
+  // Optional idempotency key. A repeat request with the same key from
+  // the same caller within the implementation-defined window returns
+  // the original response.
+  string idempotency_key = 9;
+
+  // Optional Workers session this artifact is attached to. Worker
+  // callers typically set run_id instead.
+  string session_id = 10;
+}
+
+// CreateObjectArtifactResponse is the response message for
+// CreateObjectArtifact.
+message CreateObjectArtifactResponse {
+  // The newly created artifact.
+  Artifact artifact = 1;
+}
+
+// CreateAppArtifactRequest is the request message for CreateAppArtifact.
+message CreateAppArtifactRequest {
+  // Display name for the app.
+  string name = 1;
+
+  // Optional human description.
+  string description = 2;
+
+  // Self-contained HTML content. Implementations serve this as the
+  // entry document of the deployed app. CSS and JS must be inlined or
+  // referenced by absolute URL; relative asset references are not
+  // supported in v1.
+  string html_content = 3;
+
+  // Creator user id. See CreateObjectArtifactRequest.owner_id.
+  string owner_id = 4;
+
+  // Run during which this artifact was produced, or empty.
+  string run_id = 5;
+
+  // Initial visibility. Defaults to false (private). Public apps are
+  // served at the implementation's public endpoint without an
+  // authentication check.
+  bool public = 6;
+
+  // Optional idempotency key.
+  string idempotency_key = 7;
+}
+
+// CreateAppArtifactResponse is the response message for
+// CreateAppArtifact. The returned Artifact may be in
+// DEPLOYMENT_STATE_PENDING — the caller should subscribe to Workers
+// streaming events for ARTIFACT_EVENT_TYPE_APP_DEPLOYED, or poll
+// GetArtifact, to observe readiness.
+message CreateAppArtifactResponse {
+  // The newly created artifact.
+  Artifact artifact = 1;
+}
+
+// GetArtifactRequest is the request message for GetArtifact.
+message GetArtifactRequest {
+  // Target artifact identifier.
+  string artifact_id = 1;
+}
+
+// GetArtifactResponse is the response message for GetArtifact.
+message GetArtifactResponse {
+  // The requested artifact.
+  Artifact artifact = 1;
+}
+
+// ListArtifactsRequest is the request message for ListArtifacts.
+//
+// The listing is scoped to artifacts the caller owns or has been
+// granted a permission on. Public artifacts are not enumerated
+// implicitly; callers who want public-artifact listings use a separate
+// future RPC.
+message ListArtifactsRequest {
+  // Optional type filter. If set, only artifacts of this type are
+  // returned.
+  ArtifactType type_filter = 1;
+
+  // Optional owner filter. If set, only artifacts owned by this user
+  // are returned. Permitted values depend on implementation auth:
+  // typically a non-admin caller may only set this to their own id.
+  string owner_id = 2;
+
+  // Optional run filter. If set, only artifacts produced during this
+  // run are returned.
+  string run_id = 3;
+
+  // Maximum number of artifacts to return. The server may cap the
+  // value.
+  int32 page_size = 4;
+
+  // Opaque pagination token from a previous ListArtifactsResponse.
+  string page_token = 5;
+
+  // Implementation-defined order specification. Conventional format is
+  // "<field> <asc|desc>", for example "created_at desc".
+  string order_by = 6;
+
+  // Optional session filter. If set, only artifacts attached to this
+  // Workers session are returned.
+  string session_id = 7;
+}
+
+// ListArtifactsResponse is the response message for ListArtifacts.
+message ListArtifactsResponse {
+  // Matching artifacts on this page.
+  repeated Artifact artifacts = 1;
+
+  // Opaque pagination token. Empty when there are no further results.
+  string next_page_token = 2;
+}
+
+// UpdateArtifactRequest is the request message for UpdateArtifact.
+//
+// Any field left unset is preserved. Callers supply `name`,
+// `description`, and/or `public` to change metadata; `content` (apps)
+// or `content_bytes` + `content_type` (objects) to rewrite the bytes.
+// `preview_html` follows `content_bytes` and may be set independently
+// for objects to ship a new preview without rewriting the binary.
+message UpdateArtifactRequest {
+  // Target artifact identifier.
+  string artifact_id = 1;
+
+  // Optional replacement display name.
+  optional string name = 2;
+
+  // Optional replacement description.
+  optional string description = 3;
+
+  // Optional new visibility. For app artifacts the implementation
+  // handles the ingress toggle; for object artifacts this only changes
+  // access enforcement, not the underlying Storage Object.
+  optional bool public = 4;
+
+  // App-only: replacement HTML content. Ignored for objects.
+  optional string html_content = 5;
+
+  // Object-only: replacement blob bytes.
+  bytes content_bytes = 6;
+
+  // Object-only: MIME type of `content_bytes`. Required whenever
+  // `content_bytes` is non-empty.
+  string content_type = 7;
+
+  // Object-only: replacement companion preview HTML. Empty bytes
+  // explicitly clears any prior preview.
+  bytes preview_html = 8;
+
+  // Whether `preview_html` is being set (true) or left alone (false).
+  // Needed to distinguish "clear the preview" (set=true, bytes empty)
+  // from "leave the preview" (set=false).
+  bool set_preview_html = 9;
+}
+
+// UpdateArtifactResponse is the response message for UpdateArtifact.
+message UpdateArtifactResponse {
+  // The artifact after the update.
+  Artifact artifact = 1;
+}
+
+// DeleteArtifactRequest is the request message for DeleteArtifact.
+//
+// Deleting an artifact removes the metadata record, all permission
+// grants, the associated Storage Object(s), and — for app artifacts —
+// the hosted workload.
+message DeleteArtifactRequest {
+  // Target artifact identifier.
+  string artifact_id = 1;
+}
+
+// DeleteArtifactResponse is the response message for DeleteArtifact. It
+// is intentionally empty.
+message DeleteArtifactResponse {}
+
+
+// GetArtifactDownloadURLRequest is the request message for
+// GetArtifactDownloadURL.
+message GetArtifactDownloadURLRequest {
+  // Target artifact identifier. Must refer to an object artifact.
+  string artifact_id = 1;
+}
+
+// GetArtifactDownloadURLResponse is the response message for
+// GetArtifactDownloadURL.
+message GetArtifactDownloadURLResponse {
+  // Presigned URL the caller can GET to fetch the blob bytes.
+  string download_url = 1;
+
+  // When the URL becomes invalid.
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+// GetArtifactPreviewURLRequest is the request message for
+// GetArtifactPreviewURL.
+message GetArtifactPreviewURLRequest {
+  // Target artifact identifier. Must refer to an object artifact with
+  // `has_preview` = true; otherwise the RPC fails with NOT_FOUND.
+  string artifact_id = 1;
+}
+
+// GetArtifactPreviewURLResponse is the response message for
+// GetArtifactPreviewURL.
+message GetArtifactPreviewURLResponse {
+  // Presigned URL the caller can GET to fetch the companion HTML
+  // preview.
+  string preview_url = 1;
+
+  // When the URL becomes invalid.
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+
+// ShareArtifactRequest is the request message for ShareArtifact.
+//
+// Only the artifact owner may call ShareArtifact. Sharing is
+// idempotent at the (artifact_id, user_id) pair: a repeated call with
+// a new role replaces the existing grant.
+message ShareArtifactRequest {
+  // Target artifact identifier.
+  string artifact_id = 1;
+
+  // User to grant access to.
+  string user_id = 2;
+
+  // Role to grant. ARTIFACT_ROLE_OWNER is rejected in v1.
+  ArtifactRole role = 3;
+}
+
+// ShareArtifactResponse is the response message for ShareArtifact.
+message ShareArtifactResponse {
+  // The resulting permission grant.
+  ArtifactPermission permission = 1;
+}
+
+// RevokeArtifactShareRequest is the request message for
+// RevokeArtifactShare.
+message RevokeArtifactShareRequest {
+  // Target artifact identifier.
+  string artifact_id = 1;
+
+  // User whose grant should be removed. No-op if no grant exists.
+  string user_id = 2;
+}
+
+// RevokeArtifactShareResponse is the response message for
+// RevokeArtifactShare. It is intentionally empty.
+message RevokeArtifactShareResponse {}
+
+// ListArtifactPermissionsRequest is the request message for
+// ListArtifactPermissions.
+message ListArtifactPermissionsRequest {
+  // Target artifact identifier.
+  string artifact_id = 1;
+}
+
+// ListArtifactPermissionsResponse is the response message for
+// ListArtifactPermissions.
+message ListArtifactPermissionsResponse {
+  // All non-owner permissions currently granted on the artifact.
+  repeated ArtifactPermission permissions = 1;
+}
+
+
+// Artifacts is the Nightshift artifact domain service. It persists its
+// state through Storage: one Record per Artifact, one Record per
+// ArtifactPermission, and one Storage Object per object artifact blob
+// (plus one per companion preview). App artifact workloads are managed
+// by the implementation's runtime (for example Kubernetes) and are
+// outside Storage.
+service Artifacts {
+  // CreateObjectArtifact registers a new object artifact and persists
+  // its blob bytes as a Storage Object. The caller supplies bytes
+  // inline; for large uploads, a future RPC will let callers register
+  // an artifact around a pre-uploaded Storage Object.
+  //
+  // The additional /v1/internal/artifacts/deploy-object binding mirrors
+  // cr0n-a's worker-facing route shape so the chunk-14 Python worker
+  // (`cmd/nightshift-worker-claude/artifact_tools.py`) reuses cr0n's
+  // tool implementations verbatim.
+  rpc CreateObjectArtifact(CreateObjectArtifactRequest) returns (CreateObjectArtifactResponse) {
+    option (google.api.http) = {
+      post: "/v1/artifacts/objects"
+      body: "*"
+      additional_bindings {
+        post: "/v1/internal/artifacts/deploy-object"
+        body: "*"
+      }
+    };
+  }
+
+  // CreateAppArtifact registers a new app artifact and triggers the
+  // implementation's deploy pipeline. The returned Artifact may be in
+  // DEPLOYMENT_STATE_PENDING; callers observe readiness via the
+  // ARTIFACT_EVENT_TYPE_APP_DEPLOYED event on the Workers stream, or
+  // by polling GetArtifact.
+  //
+  // The additional /v1/internal/artifacts/deploy-app binding mirrors
+  // cr0n-a's worker-facing route shape so the chunk-14 Python worker's
+  // deploy_app tool reuses cr0n's tool implementation verbatim
+  // (modulo the body-shape remap in chunk 16).
+  rpc CreateAppArtifact(CreateAppArtifactRequest) returns (CreateAppArtifactResponse) {
+    option (google.api.http) = {
+      post: "/v1/artifacts/apps"
+      body: "*"
+      additional_bindings {
+        post: "/v1/internal/artifacts/deploy-app"
+        body: "*"
+      }
+    };
+  }
+
+  // GetArtifact reads an artifact by id. Permission is required — the
+  // RPC fails with NOT_FOUND when the caller is neither owner nor
+  // grantee nor (for `public=true` artifacts) any authenticated user.
+  rpc GetArtifact(GetArtifactRequest) returns (GetArtifactResponse) {
+    option (google.api.http) = {
+      get: "/v1/artifacts/{artifact_id}"
+    };
+  }
+
+  // ListArtifacts returns artifacts the caller has access to, with
+  // optional filters.
+  rpc ListArtifacts(ListArtifactsRequest) returns (ListArtifactsResponse) {
+    option (google.api.http) = {
+      get: "/v1/artifacts"
+      additional_bindings {
+        get: "/v1/internal/artifacts/list"
+      }
+    };
+  }
+
+  // UpdateArtifact modifies metadata, visibility, and/or bytes of an
+  // existing artifact. Owner or editor role required; public/private
+  // toggles are owner-only.
+  rpc UpdateArtifact(UpdateArtifactRequest) returns (UpdateArtifactResponse) {
+    option (google.api.http) = {
+      patch: "/v1/artifacts/{artifact_id}"
+      body: "*"
+      additional_bindings {
+        put: "/v1/internal/artifacts/{artifact_id}/update"
+        body: "*"
+      }
+    };
+  }
+
+  // DeleteArtifact removes an artifact, its permissions, its Storage
+  // Objects, and (for apps) its hosted workload. Owner only.
+  rpc DeleteArtifact(DeleteArtifactRequest) returns (DeleteArtifactResponse) {
+    option (google.api.http) = {
+      delete: "/v1/artifacts/{artifact_id}"
+    };
+  }
+
+  // GetArtifactDownloadURL returns a presigned URL the caller can GET
+  // to fetch the blob bytes of an object artifact. Any role (viewer,
+  // editor, owner) or public access suffices.
+  rpc GetArtifactDownloadURL(GetArtifactDownloadURLRequest) returns (GetArtifactDownloadURLResponse) {
+    option (google.api.http) = {
+      get: "/v1/artifacts/{artifact_id}:downloadUrl"
+    };
+  }
+
+  // GetArtifactPreviewURL returns a presigned URL the caller can GET
+  // to fetch the companion HTML preview of an object artifact. Fails
+  // with NOT_FOUND when the artifact has no preview.
+  rpc GetArtifactPreviewURL(GetArtifactPreviewURLRequest) returns (GetArtifactPreviewURLResponse) {
+    option (google.api.http) = {
+      get: "/v1/artifacts/{artifact_id}:previewUrl"
+    };
+  }
+
+  // ShareArtifact grants or re-grants a permission on an artifact.
+  // Owner only.
+  rpc ShareArtifact(ShareArtifactRequest) returns (ShareArtifactResponse) {
+    option (google.api.http) = {
+      post: "/v1/artifacts/{artifact_id}/permissions"
+      body: "*"
+      additional_bindings {
+        post: "/v1/internal/artifacts/{artifact_id}/share"
+        body: "*"
+      }
+    };
+  }
+
+  // RevokeArtifactShare removes a permission grant. Owner only.
+  rpc RevokeArtifactShare(RevokeArtifactShareRequest) returns (RevokeArtifactShareResponse) {
+    option (google.api.http) = {
+      delete: "/v1/artifacts/{artifact_id}/permissions/{user_id}"
+    };
+  }
+
+  // ListArtifactPermissions returns all non-owner grants on an
+  // artifact. Any role suffices.
+  rpc ListArtifactPermissions(ListArtifactPermissionsRequest) returns (ListArtifactPermissionsResponse) {
+    option (google.api.http) = {
+      get: "/v1/artifacts/{artifact_id}/permissions"
+    };
+  }
+}

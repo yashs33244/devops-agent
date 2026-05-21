@@ -1,0 +1,362 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "nightshift/v1/auth.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "Auth"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/oauth/providers": {
+      "post": {
+        "summary": "RegisterOAuthProvider registers an OAuth application with the\nbackend. Admin-only.",
+        "operationId": "Auth_RegisterOAuthProvider",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RegisterOAuthProviderResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "RegisterOAuthProviderRequest is the request message for\nRegisterOAuthProvider. Admin-only. Registers an OAuth application\nwith the backend so users may subsequently authorize it.\n\nThe `provider_type` is a backend-interpreted string identifying\nthe upstream OAuth provider — for example `\"github\"`, `\"linear\"`,\n`\"atlassian\"`, `\"google\"`. The implementation's OAuth plugin\nresolves authorize / token / refresh URLs from this string.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1RegisterOAuthProviderRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/v1/oauth/providers/{providerName}/users/{userId}": {
+      "delete": {
+        "summary": "DeleteOAuthCredential removes a per-user OAuth grant from the\nbackend. Does not revoke the grant upstream at the provider.",
+        "operationId": "Auth_DeleteOAuthCredential",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteOAuthCredentialResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "providerName",
+            "description": "Name of the registered OAuth provider.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "userId",
+            "description": "User whose credential to delete.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/v1/oauth/providers/{providerName}/users/{userId}/token": {
+      "get": {
+        "summary": "GetOAuthToken dispenses a fresh access token for (provider,\nuser). The backend refreshes the underlying grant as needed;\ncallers never touch the refresh token directly.",
+        "operationId": "Auth_GetOAuthToken",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetOAuthTokenResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "providerName",
+            "description": "Name of the registered OAuth provider.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "userId",
+            "description": "User whose token to dispense.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/v1/oauth/providers/{providerName}:authorizeUrl": {
+      "post": {
+        "summary": "GetOAuthAuthorizeURL returns the URL to redirect the user to in\norder to start the authorization-code flow.",
+        "operationId": "Auth_GetOAuthAuthorizeURL",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetOAuthAuthorizeURLResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "providerName",
+            "description": "Name of a previously registered OAuth provider.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AuthGetOAuthAuthorizeURLBody"
+            }
+          }
+        ],
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/v1/oauth/providers/{providerName}:exchange": {
+      "post": {
+        "summary": "ExchangeOAuthCode exchanges an authorization code for tokens\nand stores them under the per-user convention. Called by the\nOAuth callback handler.",
+        "operationId": "Auth_ExchangeOAuthCode",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ExchangeOAuthCodeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "providerName",
+            "description": "Name of the registered OAuth provider.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AuthExchangeOAuthCodeBody"
+            }
+          }
+        ],
+        "tags": [
+          "Auth"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "AuthExchangeOAuthCodeBody": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User whose flow this completes. Implementations verify this\nmatches the user encoded in `state`."
+        },
+        "code": {
+          "type": "string",
+          "description": "Authorization code from the provider's callback."
+        },
+        "state": {
+          "type": "string",
+          "description": "State token returned by GetOAuthAuthorizeURL. Must match to\nprevent CSRF."
+        },
+        "redirectUrl": {
+          "type": "string",
+          "description": "The same redirect URL passed to GetOAuthAuthorizeURL."
+        }
+      },
+      "description": "ExchangeOAuthCodeRequest is the request message for\nExchangeOAuthCode. Exchanges the authorization code returned by\nthe provider for access + refresh tokens; stores them in the\nbackend under the per-user OAuth credential convention."
+    },
+    "AuthGetOAuthAuthorizeURLBody": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User initiating the flow."
+        },
+        "redirectUrl": {
+          "type": "string",
+          "description": "URL the provider will redirect back to after authorization."
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Scopes to request from the provider. Empty means use the\nbackend's default scopes for this provider type."
+        }
+      },
+      "description": "GetOAuthAuthorizeURLRequest is the request message for\nGetOAuthAuthorizeURL. Returns the URL the caller should redirect\nthe user's browser to in order to start the authorization-code\nflow."
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1DeleteOAuthCredentialResponse": {
+      "type": "object",
+      "description": "DeleteOAuthCredentialResponse is the response message for\nDeleteOAuthCredential. It is intentionally empty."
+    },
+    "v1ExchangeOAuthCodeResponse": {
+      "type": "object",
+      "description": "ExchangeOAuthCodeResponse is the response message for\nExchangeOAuthCode. It is intentionally empty — the per-user\ncredential is now stored in the backend and is reachable via\nGetOAuthToken."
+    },
+    "v1GetOAuthAuthorizeURLResponse": {
+      "type": "object",
+      "properties": {
+        "authorizeUrl": {
+          "type": "string",
+          "description": "URL the caller should redirect the user's browser to."
+        },
+        "state": {
+          "type": "string",
+          "description": "Opaque state token the caller MUST pass back to\nExchangeOAuthCode to prove the callback corresponds to this\nflow. Implementations typically encode user_id and a nonce."
+        }
+      },
+      "description": "GetOAuthAuthorizeURLResponse is the response message for\nGetOAuthAuthorizeURL."
+    },
+    "v1GetOAuthTokenResponse": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "$ref": "#/definitions/v1OAuthToken",
+          "description": "Fresh per-user OAuth token."
+        }
+      },
+      "description": "GetOAuthTokenResponse is the response message for GetOAuthToken.\nThe backend MUST transparently refresh the underlying grant before\nreturning so the returned `access_token` is usable for the\nprovider's full access-token TTL window."
+    },
+    "v1OAuthToken": {
+      "type": "object",
+      "properties": {
+        "accessToken": {
+          "type": "string",
+          "description": "The access token the caller sends to the upstream MCP server as\n`Authorization: Bearer \u003caccess_token\u003e`."
+        },
+        "tokenType": {
+          "type": "string",
+          "description": "OAuth token type — typically `\"Bearer\"`."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When `access_token` becomes invalid if not refreshed. The\ndispenser SHOULD refresh before this time on the next\nGetOAuthToken call; callers should treat it as informational."
+        }
+      },
+      "description": "OAuthToken is a per-user OAuth 2.0 access token materialized by the\nOAuth dispenser. The dispenser auto-refreshes the underlying grant\nas needed; callers see a fresh `access_token` on every read."
+    },
+    "v1RegisterOAuthProviderRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name of the provider registration. Used by subsequent\ndispenser RPCs to identify which provider to act on. Unique\nwithin the backend."
+        },
+        "providerType": {
+          "type": "string",
+          "description": "Upstream provider identifier (for example `\"github\"`)."
+        },
+        "clientId": {
+          "type": "string",
+          "description": "OAuth client ID issued by the upstream provider."
+        },
+        "clientSecret": {
+          "type": "string",
+          "description": "OAuth client secret issued by the upstream provider. Stored\nencrypted in the backend; never returned."
+        }
+      },
+      "description": "RegisterOAuthProviderRequest is the request message for\nRegisterOAuthProvider. Admin-only. Registers an OAuth application\nwith the backend so users may subsequently authorize it.\n\nThe `provider_type` is a backend-interpreted string identifying\nthe upstream OAuth provider — for example `\"github\"`, `\"linear\"`,\n`\"atlassian\"`, `\"google\"`. The implementation's OAuth plugin\nresolves authorize / token / refresh URLs from this string."
+    },
+    "v1RegisterOAuthProviderResponse": {
+      "type": "object",
+      "description": "RegisterOAuthProviderResponse is the response message for\nRegisterOAuthProvider. It is intentionally empty — the registration\nis identified on subsequent calls by `name`."
+    }
+  }
+}

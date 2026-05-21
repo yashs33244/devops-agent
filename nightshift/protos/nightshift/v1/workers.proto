@@ -1,0 +1,601 @@
+// Nightshift Workers interface — the core agent execution contract.
+//
+// Workers is the load-bearing surface of the Nightshift specification.
+// It defines what it means to run an autonomous agent on the control
+// plane:
+//
+//   * Run lifecycle (PENDING -> RUNNING -> COMPLETED / ERROR /
+//     INTERRUPTED).
+//   * Invoker attribution — every run records `invoker_type` (user or
+//     schedule) + `invoker_id` so billing, audit, and quota can
+//     distinguish human- from cron-triggered workloads.
+//   * Nightshift-owned `session_id` — a control-plane identifier for
+//     multi-turn conversations, intentionally distinct from whatever
+//     session identifier the agent SDK uses internally. The
+//     implementation is responsible for mapping a Nightshift
+//     session_id to its SDK-specific state.
+//   * Streaming events (`StreamRunEvents`) with history replay, plus
+//     a non-streaming history accessor.
+//   * Interrupt / cancellation semantics.
+//   * Session deletion (`DeleteSession`) — removes all runs and
+//     associated session state for a given session_id.
+//   * Completion payload carrying cost (USD) and per-model token
+//     usage, captured from the agent SDK's terminal message.
+//   * Worker callback RPCs — the contract by which the run container
+//     posts events and terminal outcomes back to the control plane.
+//     These are a separate trust boundary from the user-facing RPCs
+//     (§8 of `workers.md`).
+//
+// Workers persists its durable state through Storage: run metadata as
+// `Record`s in the `runs` collection, events as `Record`s in the
+// `events` collection (with a (run_id, index) ordering invariant), and
+// per-user / per-session SDK state as `Object`s on an implementation-
+// defined bucket convention (for example EFS-backed RWX volumes in the
+// reference implementation).
+//
+// Artifact lifecycle events (`artifact.created`, `artifact.updated`,
+// `artifact.app_deployed`; see `artifacts.proto`) are forwarded
+// through Workers' streaming interface as `StreamEvent`s with
+// `type = "artifact.*"`. Subscribers see the same `ArtifactEvent`
+// payload that was emitted.
+syntax = "proto3";
+
+package nightshift.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/nightshiftco/nightshift/gen/go/nightshift/v1;nightshiftv1";
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+// RunStatus is the lifecycle state of a Run.
+enum RunStatus {
+  // Proto3 default. Conforming implementations should not return this.
+  RUN_STATUS_UNSPECIFIED = 0;
+
+  // The run record has been created but execution has not begun.
+  // Implementations transition runs from PENDING to RUNNING once the
+  // underlying workload (for example a Kubernetes Job) has started.
+  RUN_STATUS_PENDING = 1;
+
+  // The run is executing. Events are being posted through the worker
+  // callback surface and forwarded to streaming subscribers.
+  RUN_STATUS_RUNNING = 2;
+
+  // The run finished successfully. `session_id` and `usage` are
+  // populated on the Run record.
+  RUN_STATUS_COMPLETED = 3;
+
+  // The run finished unsuccessfully. `error` is populated with an
+  // implementation-supplied message.
+  RUN_STATUS_ERROR = 4;
+
+  // The run was cancelled before natural completion, either by an
+  // explicit `InterruptRun` call or by an implementation-side
+  // timeout / deadline. `error` MAY carry a reason.
+  RUN_STATUS_INTERRUPTED = 5;
+}
+
+// InvokerType categorizes who or what triggered a run. It is load-
+// bearing for billing attribution, audit, and rate limiting.
+enum InvokerType {
+  // Proto3 default. Conforming implementations should not return this.
+  INVOKER_TYPE_UNSPECIFIED = 0;
+
+  // A human user created the run directly. `invoker_id` is the
+  // user's identifier.
+  INVOKER_TYPE_USER = 1;
+
+  // A schedule (see chunk 7 Scheduling) fired and created the run on
+  // the owning user's behalf. `invoker_id` is the schedule
+  // identifier.
+  INVOKER_TYPE_SCHEDULE = 2;
+}
+
+// -----------------------------------------------------------------------------
+// Entities
+// -----------------------------------------------------------------------------
+
+// RunUsage is the resource-usage summary captured at run completion
+// from the agent SDK's terminal message.
+message RunUsage {
+  // Total cost in USD, as reported by the SDK's result payload
+  // (pre-markup).
+  double total_cost_usd = 1;
+
+  // Total input tokens billed across all turns in this run.
+  int64 input_tokens = 2;
+
+  // Total output tokens billed across all turns in this run.
+  int64 output_tokens = 3;
+
+  // Cache-read tokens (prompt prefixes served from prompt cache).
+  int64 cache_read_tokens = 4;
+
+  // Cache-creation tokens (prompt prefixes written into prompt
+  // cache).
+  int64 cache_creation_tokens = 5;
+}
+
+// Run is the metadata record for a single agent execution.
+message Run {
+  // Server-assigned identifier. Stable for the lifetime of the run.
+  string id = 1;
+
+  // The task instruction the agent was launched with. Preserved
+  // verbatim so runs are reproducible and auditable.
+  string prompt = 2;
+
+  // Current lifecycle state. See RunStatus.
+  RunStatus status = 3;
+
+  // Nightshift-owned session identifier, used to resume a multi-turn
+  // conversation across runs. Implementations map this to whatever
+  // session identifier the agent SDK uses internally; the spec does
+  // NOT expose the SDK session id. Empty until the first completed
+  // run sets it (or until `CreateRun` is called with an explicit
+  // `session_id` to continue an existing conversation).
+  string session_id = 4;
+
+  // Owning user. Credentials, artifacts, per-user state (see chunk 8)
+  // are all scoped to this value.
+  string user_id = 5;
+
+  // Categorization of who triggered this run.
+  InvokerType invoker_type = 6;
+
+  // Identifier of the triggering entity, interpretation depends on
+  // invoker_type. For INVOKER_TYPE_USER this is a user id; for
+  // INVOKER_TYPE_SCHEDULE this is a schedule id.
+  string invoker_id = 7;
+
+  // Populated with an implementation-supplied message when status is
+  // RUN_STATUS_ERROR or RUN_STATUS_INTERRUPTED.
+  string error = 8;
+
+  // Number of events persisted for this run. Grows monotonically
+  // during RUNNING and is frozen at a terminal status.
+  int64 event_count = 9;
+
+  // Aggregate resource usage captured at completion. Zero-valued
+  // until a run reaches RUN_STATUS_COMPLETED.
+  RunUsage usage = 10;
+
+  // Time the run record was created.
+  google.protobuf.Timestamp created_at = 11;
+
+  // Time the run transitioned from PENDING to RUNNING. Zero value if
+  // the run never started.
+  google.protobuf.Timestamp started_at = 12;
+
+  // Time the run reached a terminal status. Zero value while the run
+  // is PENDING or RUNNING.
+  google.protobuf.Timestamp ended_at = 13;
+}
+
+// StreamEvent is a single message in a run's event stream. Events
+// carry arbitrary SDK output, worker-emitted lifecycle signals, and
+// forwarded artifact events.
+message StreamEvent {
+  // Monotonic index within the run, starting at 0. The (run_id,
+  // index) pair is unique.
+  int64 index = 1;
+
+  // Discriminator describing the payload shape. Well-known values
+  // include:
+  //
+  //   * `"system.worker_started"` — emitted by the worker at run
+  //     start.
+  //   * `"user"`, `"assistant"` — SDK message kinds.
+  //   * `"result.<subtype>"`, `"system.<subtype>"` — SDK
+  //     intermediate signals.
+  //   * `"rate_limit_event"` — SDK rate-limit notification.
+  //   * `"artifact.created"`, `"artifact.updated"`,
+  //     `"artifact.app_deployed"` — forwarded from the Artifacts
+  //     interface (see `artifacts.proto`, `ArtifactEventType`).
+  //
+  // Conforming implementations SHOULD use these well-known strings
+  // when the payload matches their shape, and MAY introduce
+  // additional string values. Subscribers MUST treat unknown `type`
+  // values as opaque and preserve them when replaying history.
+  string type = 2;
+
+  // Wallclock time the event was produced.
+  google.protobuf.Timestamp timestamp = 3;
+
+  // Opaque structured payload. Schema varies by `type`. Conforming
+  // implementations MUST preserve the payload bit-for-bit through
+  // the streaming and history-replay paths.
+  google.protobuf.Struct raw = 4;
+}
+
+// -----------------------------------------------------------------------------
+// Run RPCs
+// -----------------------------------------------------------------------------
+
+// CreateSessionRequest is the request message for CreateSession.
+message CreateSessionRequest {}
+
+// CreateSessionResponse is the response message for CreateSession.
+message CreateSessionResponse {
+  string session_id = 1;
+}
+
+// CreateRunRequest is the request message for CreateRun.
+message CreateRunRequest {
+  // Task instruction.
+  string prompt = 1;
+
+  // Optional Nightshift session id to continue an existing multi-
+  // turn conversation. Empty means start a new session; the created
+  // run's `session_id` will be assigned by the implementation at
+  // completion time.
+  string session_id = 2;
+
+  // Owning user. Implementations typically derive this from the
+  // caller's auth principal; it is carried explicitly on the request
+  // so internal callers (for example a Scheduling service firing a
+  // cron) can attribute runs to the owning user.
+  string user_id = 3;
+
+  // Categorization of who is creating this run.
+  InvokerType invoker_type = 4;
+
+  // Identifier of the triggering entity, per InvokerType semantics.
+  string invoker_id = 5;
+
+  // Optional idempotency key.
+  string idempotency_key = 6;
+}
+
+// CreateRunResponse is the response message for CreateRun.
+message CreateRunResponse {
+  // The newly created run. Typically in RUN_STATUS_PENDING; may be
+  // RUN_STATUS_RUNNING already if the implementation's launch path
+  // is synchronous.
+  Run run = 1;
+}
+
+// GetRunRequest is the request message for GetRun.
+message GetRunRequest {
+  // Target run identifier.
+  string run_id = 1;
+}
+
+// GetRunResponse is the response message for GetRun.
+message GetRunResponse {
+  // The requested run.
+  Run run = 1;
+}
+
+// ListRunsRequest is the request message for ListRuns.
+message ListRunsRequest {
+  // Optional filter: only return runs owned by this user.
+  string user_id = 1;
+
+  // Optional filter: only return runs with this status.
+  RunStatus status = 2;
+
+  // Optional filter: only return runs for this session_id.
+  string session_id = 3;
+
+  // Optional filter: only return runs invoked by this (type, id)
+  // pair. Setting `invoker_type` without `invoker_id` filters on
+  // type alone.
+  InvokerType invoker_type = 4;
+  string invoker_id = 5;
+
+  // Maximum number of runs to return. The server may cap the value.
+  int32 page_size = 6;
+
+  // Opaque pagination token.
+  string page_token = 7;
+
+  // Implementation-defined order specification. Conventional format
+  // is `"<field> <asc|desc>"`, for example `"created_at desc"`.
+  string order_by = 8;
+}
+
+// ListRunsResponse is the response message for ListRuns.
+message ListRunsResponse {
+  // Matching runs on this page.
+  repeated Run runs = 1;
+
+  // Opaque pagination token. Empty when there are no further
+  // results.
+  string next_page_token = 2;
+}
+
+// InterruptRunRequest is the request message for InterruptRun.
+message InterruptRunRequest {
+  // Target run identifier.
+  string run_id = 1;
+}
+
+// InterruptRunResponse is the response message for InterruptRun. The
+// returned Run reflects the post-interrupt state; for asynchronous
+// implementations the status may still be RUN_STATUS_RUNNING until
+// the worker observes the cancellation signal — callers observe the
+// transition to RUN_STATUS_INTERRUPTED via the event stream or a
+// subsequent GetRun.
+message InterruptRunResponse {
+  // The run after the interrupt signal has been recorded.
+  Run run = 1;
+}
+
+// DeleteSessionRequest is the request message for DeleteSession.
+//
+// Deleting a session removes every run with the matching `session_id`
+// AND the underlying SDK session state stored by the implementation
+// (for example Claude session JSONL files on a per-user RWX volume).
+// Callers use this to start a genuinely fresh conversation on next
+// run, discarding history.
+message DeleteSessionRequest {
+  // Target session identifier.
+  string session_id = 1;
+}
+
+// DeleteSessionResponse is the response message for DeleteSession.
+message DeleteSessionResponse {
+  // Number of run records removed.
+  int64 runs_deleted = 1;
+}
+
+// -----------------------------------------------------------------------------
+// Event RPCs
+// -----------------------------------------------------------------------------
+
+// StreamRunEventsRequest is the request message for StreamRunEvents.
+message StreamRunEventsRequest {
+  // Target run identifier.
+  string run_id = 1;
+
+  // When true (the default effective behavior for new subscribers),
+  // the server replays all persisted events for the run before
+  // streaming live events. When false, only events produced after
+  // the subscription MAY be delivered. Implementations that cannot
+  // selectively suppress history SHOULD accept the field and ignore
+  // it.
+  bool include_history = 2;
+
+  // Optional lower-bound index filter. When non-zero, only events
+  // with `index >= from_index` are delivered.
+  int64 from_index = 3;
+}
+
+// StreamRunEventsResponse is a single message on the StreamRunEvents
+// server stream.
+message StreamRunEventsResponse {
+  // One event from the run. The stream completes (no error) once the
+  // run reaches a terminal status and all buffered events have been
+  // delivered.
+  StreamEvent event = 1;
+}
+
+// ListRunEventsRequest is the request message for ListRunEvents — a
+// non-streaming paginated history accessor.
+message ListRunEventsRequest {
+  // Target run identifier.
+  string run_id = 1;
+
+  // Optional lower-bound index filter.
+  int64 from_index = 2;
+
+  // Maximum number of events to return. The server may cap the
+  // value.
+  int32 page_size = 3;
+
+  // Opaque pagination token.
+  string page_token = 4;
+}
+
+// ListRunEventsResponse is the response message for ListRunEvents.
+message ListRunEventsResponse {
+  // Matching events on this page, ordered by ascending index.
+  repeated StreamEvent events = 1;
+
+  // Opaque pagination token. Empty when there are no further
+  // results.
+  string next_page_token = 2;
+}
+
+// -----------------------------------------------------------------------------
+// Worker callback RPCs
+// -----------------------------------------------------------------------------
+
+// PostWorkerEventRequest is the request message for PostWorkerEvent.
+// Called by the run workload (for example a Kubernetes Job pod) to
+// push a single event back to the control plane.
+message PostWorkerEventRequest {
+  // Target run identifier.
+  string run_id = 1;
+
+  // The event being posted. Implementations MUST assign a monotonic
+  // `index` server-side; the value on the incoming event is ignored.
+  StreamEvent event = 2;
+}
+
+// PostWorkerEventResponse is the response message for PostWorkerEvent.
+message PostWorkerEventResponse {
+  // The server-assigned index the event was persisted at.
+  int64 index = 1;
+}
+
+// CompleteRunRequest is the request message for CompleteRun. Called
+// by the worker when the agent finishes successfully.
+message CompleteRunRequest {
+  // Target run identifier.
+  string run_id = 1;
+
+  // Nightshift session identifier the worker was running under. The
+  // implementation persists this on the Run so the next run
+  // continuing the conversation can reference it.
+  string session_id = 2;
+
+  // Cost + token usage captured from the agent SDK's terminal
+  // message.
+  RunUsage usage = 3;
+}
+
+// CompleteRunResponse is the response message for CompleteRun. It is
+// intentionally empty — the terminal state is visible on the Run via
+// GetRun.
+message CompleteRunResponse {}
+
+// FailRunRequest is the request message for FailRun. Called by the
+// worker when the agent fails to complete.
+message FailRunRequest {
+  // Target run identifier.
+  string run_id = 1;
+
+  // Free-form error message. Preserved on the Run.
+  string error = 2;
+}
+
+// FailRunResponse is the response message for FailRun. It is
+// intentionally empty.
+message FailRunResponse {}
+
+// GetRunCancellationRequest is the request message for
+// GetRunCancellation. Workers poll this during execution to observe
+// control-plane-initiated cancellation.
+message GetRunCancellationRequest {
+  // Target run identifier.
+  string run_id = 1;
+}
+
+// GetRunCancellationResponse is the response message for
+// GetRunCancellation.
+message GetRunCancellationResponse {
+  // Whether the control plane has requested cancellation of this
+  // run. Once true, the worker should invoke its SDK's interrupt
+  // path, drain in-flight events, and call CompleteRun or FailRun as
+  // appropriate.
+  bool cancelled = 1;
+}
+
+// -----------------------------------------------------------------------------
+// Service
+// -----------------------------------------------------------------------------
+
+// Workers is the core agent execution interface of Nightshift. It
+// exposes two RPC groups on a single service — the outer (user /
+// scheduler) surface for run lifecycle + streaming, and the inner
+// (worker callback) surface for events, completion, failure, and
+// cancellation polling. The two groups share a service but are
+// authenticated separately; see `workers.md` §8.
+service Workers {
+  // -------------------- Run lifecycle --------------------
+
+  // CreateSession mints a fresh session identifier without launching
+  // a run.
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse) {
+    option (google.api.http) = {
+      post: "/v1/sessions"
+      body: "*"
+    };
+  }
+
+  // CreateRun creates a run record, reserves a session identifier,
+  // and launches the underlying run workload.
+  rpc CreateRun(CreateRunRequest) returns (CreateRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/runs"
+      body: "*"
+    };
+  }
+
+  // GetRun returns a single run's metadata.
+  rpc GetRun(GetRunRequest) returns (GetRunResponse) {
+    option (google.api.http) = {
+      get: "/v1/runs/{run_id}"
+    };
+  }
+
+  // ListRuns returns runs matching the supplied filters.
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse) {
+    option (google.api.http) = {
+      get: "/v1/runs"
+    };
+  }
+
+  // InterruptRun signals cancellation. The run reaches
+  // RUN_STATUS_INTERRUPTED asynchronously; callers observe the
+  // transition via StreamRunEvents or a subsequent GetRun.
+  rpc InterruptRun(InterruptRunRequest) returns (InterruptRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/runs/{run_id}:interrupt"
+      body: "*"
+    };
+  }
+
+  // DeleteSession removes every run with the given session_id and
+  // the underlying SDK session state. Irreversible.
+  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse) {
+    option (google.api.http) = {
+      delete: "/v1/runs/session/{session_id}"
+    };
+  }
+
+  // -------------------- Events --------------------
+
+  // StreamRunEvents is a server-streaming RPC that delivers every
+  // event from a run. Defaults to replaying all persisted events
+  // followed by live events until the run terminates.
+  rpc StreamRunEvents(StreamRunEventsRequest) returns (stream StreamRunEventsResponse) {
+    option (google.api.http) = {
+      get: "/v1/runs/{run_id}/events:stream"
+    };
+  }
+
+  // ListRunEvents returns a paginated history of events for a run
+  // without streaming. Useful for offline inspection and tests.
+  rpc ListRunEvents(ListRunEventsRequest) returns (ListRunEventsResponse) {
+    option (google.api.http) = {
+      get: "/v1/runs/{run_id}/events"
+    };
+  }
+
+  // -------------------- Worker callbacks --------------------
+
+  // PostWorkerEvent is the worker's push channel: each SDK message
+  // (or worker-emitted lifecycle signal) becomes a StreamEvent and
+  // is persisted + broadcast to streaming subscribers.
+  rpc PostWorkerEvent(PostWorkerEventRequest) returns (PostWorkerEventResponse) {
+    option (google.api.http) = {
+      post: "/v1/internal/runs/{run_id}/events"
+      body: "*"
+    };
+  }
+
+  // CompleteRun is the worker's success-terminal signal. Includes
+  // the Nightshift session_id and the RunUsage summary from the
+  // agent SDK's terminal message.
+  rpc CompleteRun(CompleteRunRequest) returns (CompleteRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/internal/runs/{run_id}:complete"
+      body: "*"
+    };
+  }
+
+  // FailRun is the worker's failure-terminal signal.
+  rpc FailRun(FailRunRequest) returns (FailRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/internal/runs/{run_id}:fail"
+      body: "*"
+    };
+  }
+
+  // GetRunCancellation is the worker's cancellation-polling RPC.
+  // Workers SHOULD call this periodically during execution and
+  // gracefully terminate the agent when `cancelled = true`.
+  rpc GetRunCancellation(GetRunCancellationRequest) returns (GetRunCancellationResponse) {
+    option (google.api.http) = {
+      get: "/v1/internal/runs/{run_id}/cancellation"
+    };
+  }
+}

@@ -1,0 +1,43 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.grafana.dashboard }}
+{{- $svcName := include "chart.fullname" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $svcName }}-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+    grafana_dashboard: "1"  # picked up by Grafana sidecar
+data:
+  dashboard.json: |
+    {
+      "title": "{{ $svcName }} — Service Dashboard",
+      "uid": "{{ $svcName | sha256sum | trunc 8 }}",
+      "tags": ["devops-agent", "{{ .Release.Namespace }}"],
+      "panels": [
+        {
+          "id": 1, "type": "graph", "title": "Request Rate",
+          "targets": [{"expr": "rate(http_requests_total{service={{ printf "%q" $svcName }}}[5m])", "legendFormat": "{{ "{{status}}" }}"}],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+        },
+        {
+          "id": 2, "type": "graph", "title": "p95 Latency",
+          "targets": [{"expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service={{ printf "%q" $svcName }}}[5m]))", "legendFormat": "p95"}],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+        },
+        {
+          "id": 3, "type": "stat", "title": "Error Rate",
+          "targets": [{"expr": "rate(http_requests_total{service={{ printf "%q" $svcName }},status=~\"5..\"}[5m]) / rate(http_requests_total{service={{ printf "%q" $svcName }}}[5m]) * 100"}],
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8}
+        },
+        {
+          "id": 4, "type": "stat", "title": "Uptime",
+          "targets": [{"expr": "up{job={{ printf "%q" $svcName }}}"}],
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8}
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "time": {"from": "now-1h", "to": "now"}
+    }
+{{- end }}

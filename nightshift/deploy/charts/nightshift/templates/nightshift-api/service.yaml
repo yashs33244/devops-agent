@@ -1,0 +1,26 @@
+{{- $name := include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-api") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nightshift-api
+spec:
+  type: {{ .Values.nightshift_api.service.type }}
+  selector:
+    {{- include "nightshift.selectorLabels" (dict "Release" .Release "component" "nightshift-api") | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ .Values.nightshift_api.service.grpcPort }}
+      targetPort: grpc
+      protocol: TCP
+    - name: http
+      port: {{ .Values.nightshift_api.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.nightshift_api.service.metricsPort | default 9090 }}
+      targetPort: metrics
+      protocol: TCP

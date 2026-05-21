@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chicklet-api-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  chicklet-api-performance.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "title": "Request Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(chicklet_api_http_requests_total[5m])) by (path)",
+              "legendFormat": "{{path}}"
+            }
+          ]
+        },
+        {
+          "title": "Error Rate (4xx/5xx)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(chicklet_api_http_requests_total{status=~\"[45].*\"}[5m])) by (path, status)",
+              "legendFormat": "{{path}} {{status}}"
+            }
+          ]
+        },
+        {
+          "title": "Request Duration p50/p95/p99",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(chicklet_api_http_request_duration_seconds_bucket[5m])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(chicklet_api_http_request_duration_seconds_bucket[5m])) by (le))",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(chicklet_api_http_request_duration_seconds_bucket[5m])) by (le))",
+              "legendFormat": "p99"
+            }
+          ]
+        },
+        {
+          "title": "Request Duration by Path (p95)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(chicklet_api_http_request_duration_seconds_bucket[5m])) by (le, path))",
+              "legendFormat": "{{path}}"
+            }
+          ]
+        },
+        {
+          "title": "Requests by Status Code",
+          "type": "piechart",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(increase(chicklet_api_http_requests_total[1h])) by (status)",
+              "legendFormat": "{{status}}"
+            }
+          ]
+        },
+        {
+          "title": "Top Endpoints by Request Count",
+          "type": "bargauge",
+          "gridPos": { "h": 8, "w": 16, "x": 8, "y": 16 },
+          "targets": [
+            {
+              "expr": "topk(10, sum(increase(chicklet_api_http_requests_total[1h])) by (method, path))",
+              "legendFormat": "{{method}} {{path}}"
+            }
+          ]
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["chicklet", "api"],
+      "templating": { "list": [] },
+      "time": { "from": "now-1h", "to": "now" },
+      "title": "Chicklet API Performance",
+      "uid": "chicklet-api-performance"
+    }

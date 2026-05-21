@@ -1,0 +1,11 @@
+fragment Metric on Metric {
+  name
+  tags {
+    name
+    value
+  }
+  values {
+    time
+    value
+  }
+}
