@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            NOTES=$(git log --oneline "$PREV_TAG"..HEAD --no-merges | head -50)
+          else
+            NOTES=$(git log --oneline --no-merges | head -50)
+          fi
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
+        with:
+          generate_release_notes: true
+          body: |
+            ## Changes
+            ${{ steps.changelog.outputs.notes }}
+
+            ## Components
+            | Component | Path |
+            |-----------|------|
+            | Orchestration tools | `tools/` |
+            | Terraform templates | `templates/terraform/` |
+            | Dockerfile templates | `templates/dockerfiles/` |
+            | GitHub Actions templates | `templates/github-actions/` |
+            | Helm chart template | `templates/helm/` |
+            | holmesgpt (SRE AI) | `agents/holmesgpt/` |
+            | kagent (K8s AI) | `agents/kagent/` |
+            | nightshift (cost scheduler) | `agents/nightshift/` |
+            | opensre (runbook automation) | `agents/opensre/` |
+            | plural (GitOps) | `agents/plural/` |

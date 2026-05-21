@@ -1,0 +1,1100 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "nightshift/v1/artifacts.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "Artifacts"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/artifacts": {
+      "get": {
+        "summary": "ListArtifacts returns artifacts the caller has access to, with\noptional filters.",
+        "operationId": "Artifacts_ListArtifacts",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListArtifactsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "typeFilter",
+            "description": "Optional type filter. If set, only artifacts of this type are\nreturned.\n\n - ARTIFACT_TYPE_UNSPECIFIED: Proto3 default. Conforming implementations should not return this.\n - ARTIFACT_TYPE_OBJECT: Binary blob identified by a Storage Object.\n - ARTIFACT_TYPE_APP: Hosted static site deployed as a workload in the implementation's\nruntime.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "ARTIFACT_TYPE_UNSPECIFIED",
+              "ARTIFACT_TYPE_OBJECT",
+              "ARTIFACT_TYPE_APP"
+            ],
+            "default": "ARTIFACT_TYPE_UNSPECIFIED"
+          },
+          {
+            "name": "ownerId",
+            "description": "Optional owner filter. If set, only artifacts owned by this user\nare returned. Permitted values depend on implementation auth:\ntypically a non-admin caller may only set this to their own id.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "runId",
+            "description": "Optional run filter. If set, only artifacts produced during this\nrun are returned.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "description": "Maximum number of artifacts to return. The server may cap the\nvalue.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "pageToken",
+            "description": "Opaque pagination token from a previous ListArtifactsResponse.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "orderBy",
+            "description": "Implementation-defined order specification. Conventional format is\n\"\u003cfield\u003e \u003casc|desc\u003e\", for example \"created_at desc\".",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "sessionId",
+            "description": "Optional session filter. If set, only artifacts attached to this\nWorkers session are returned.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/artifacts/apps": {
+      "post": {
+        "summary": "CreateAppArtifact registers a new app artifact and triggers the\nimplementation's deploy pipeline. The returned Artifact may be in\nDEPLOYMENT_STATE_PENDING; callers observe readiness via the\nARTIFACT_EVENT_TYPE_APP_DEPLOYED event on the Workers stream, or\nby polling GetArtifact.",
+        "description": "The additional /v1/internal/artifacts/deploy-app binding mirrors\ncr0n-a's worker-facing route shape so the chunk-14 Python worker's\ndeploy_app tool reuses cr0n's tool implementation verbatim\n(modulo the body-shape remap in chunk 16).",
+        "operationId": "Artifacts_CreateAppArtifact",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateAppArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "CreateAppArtifactRequest is the request message for CreateAppArtifact.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateAppArtifactRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/artifacts/objects": {
+      "post": {
+        "summary": "CreateObjectArtifact registers a new object artifact and persists\nits blob bytes as a Storage Object. The caller supplies bytes\ninline; for large uploads, a future RPC will let callers register\nan artifact around a pre-uploaded Storage Object.",
+        "description": "The additional /v1/internal/artifacts/deploy-object binding mirrors\ncr0n-a's worker-facing route shape so the chunk-14 Python worker\n(`cmd/nightshift-worker-claude/artifact_tools.py`) reuses cr0n's\ntool implementations verbatim.",
+        "operationId": "Artifacts_CreateObjectArtifact",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateObjectArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "CreateObjectArtifactRequest is the request message for\nCreateObjectArtifact. The caller supplies blob bytes inline; the\nimplementation is responsible for persisting them as a Storage\nObject.\n\nThis shape is a deliberate convenience for workers that produce small\nartifacts (reports, images, JSON documents) in-memory. Large uploads\nthat benefit from presigned URLs should call Storage's\nInitiateObjectUpload / FinalizeObjectUpload directly and then invoke\na future `RegisterObjectArtifact` variant; v1 of this spec does not\ndefine that RPC.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateObjectArtifactRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifactId}": {
+      "get": {
+        "summary": "GetArtifact reads an artifact by id. Permission is required — the\nRPC fails with NOT_FOUND when the caller is neither owner nor\ngrantee nor (for `public=true` artifacts) any authenticated user.",
+        "operationId": "Artifacts_GetArtifact",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteArtifact removes an artifact, its permissions, its Storage\nObjects, and (for apps) its hosted workload. Owner only.",
+        "operationId": "Artifacts_DeleteArtifact",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      },
+      "patch": {
+        "summary": "UpdateArtifact modifies metadata, visibility, and/or bytes of an\nexisting artifact. Owner or editor role required; public/private\ntoggles are owner-only.",
+        "operationId": "Artifacts_UpdateArtifact",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ArtifactsUpdateArtifactBody"
+            }
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifactId}/permissions": {
+      "get": {
+        "summary": "ListArtifactPermissions returns all non-owner grants on an\nartifact. Any role suffices.",
+        "operationId": "Artifacts_ListArtifactPermissions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListArtifactPermissionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      },
+      "post": {
+        "summary": "ShareArtifact grants or re-grants a permission on an artifact.\nOwner only.",
+        "operationId": "Artifacts_ShareArtifact",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ShareArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ArtifactsShareArtifactBody"
+            }
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifactId}/permissions/{userId}": {
+      "delete": {
+        "summary": "RevokeArtifactShare removes a permission grant. Owner only.",
+        "operationId": "Artifacts_RevokeArtifactShare",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RevokeArtifactShareResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "userId",
+            "description": "User whose grant should be removed. No-op if no grant exists.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifactId}:downloadUrl": {
+      "get": {
+        "summary": "GetArtifactDownloadURL returns a presigned URL the caller can GET\nto fetch the blob bytes of an object artifact. Any role (viewer,\neditor, owner) or public access suffices.",
+        "operationId": "Artifacts_GetArtifactDownloadURL",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetArtifactDownloadURLResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier. Must refer to an object artifact.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifactId}:previewUrl": {
+      "get": {
+        "summary": "GetArtifactPreviewURL returns a presigned URL the caller can GET\nto fetch the companion HTML preview of an object artifact. Fails\nwith NOT_FOUND when the artifact has no preview.",
+        "operationId": "Artifacts_GetArtifactPreviewURL",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetArtifactPreviewURLResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier. Must refer to an object artifact with\n`has_preview` = true; otherwise the RPC fails with NOT_FOUND.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/internal/artifacts/deploy-app": {
+      "post": {
+        "summary": "CreateAppArtifact registers a new app artifact and triggers the\nimplementation's deploy pipeline. The returned Artifact may be in\nDEPLOYMENT_STATE_PENDING; callers observe readiness via the\nARTIFACT_EVENT_TYPE_APP_DEPLOYED event on the Workers stream, or\nby polling GetArtifact.",
+        "description": "The additional /v1/internal/artifacts/deploy-app binding mirrors\ncr0n-a's worker-facing route shape so the chunk-14 Python worker's\ndeploy_app tool reuses cr0n's tool implementation verbatim\n(modulo the body-shape remap in chunk 16).",
+        "operationId": "Artifacts_CreateAppArtifact2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateAppArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "CreateAppArtifactRequest is the request message for CreateAppArtifact.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateAppArtifactRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/internal/artifacts/deploy-object": {
+      "post": {
+        "summary": "CreateObjectArtifact registers a new object artifact and persists\nits blob bytes as a Storage Object. The caller supplies bytes\ninline; for large uploads, a future RPC will let callers register\nan artifact around a pre-uploaded Storage Object.",
+        "description": "The additional /v1/internal/artifacts/deploy-object binding mirrors\ncr0n-a's worker-facing route shape so the chunk-14 Python worker\n(`cmd/nightshift-worker-claude/artifact_tools.py`) reuses cr0n's\ntool implementations verbatim.",
+        "operationId": "Artifacts_CreateObjectArtifact2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateObjectArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "CreateObjectArtifactRequest is the request message for\nCreateObjectArtifact. The caller supplies blob bytes inline; the\nimplementation is responsible for persisting them as a Storage\nObject.\n\nThis shape is a deliberate convenience for workers that produce small\nartifacts (reports, images, JSON documents) in-memory. Large uploads\nthat benefit from presigned URLs should call Storage's\nInitiateObjectUpload / FinalizeObjectUpload directly and then invoke\na future `RegisterObjectArtifact` variant; v1 of this spec does not\ndefine that RPC.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateObjectArtifactRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/internal/artifacts/list": {
+      "get": {
+        "summary": "ListArtifacts returns artifacts the caller has access to, with\noptional filters.",
+        "operationId": "Artifacts_ListArtifacts2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListArtifactsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "typeFilter",
+            "description": "Optional type filter. If set, only artifacts of this type are\nreturned.\n\n - ARTIFACT_TYPE_UNSPECIFIED: Proto3 default. Conforming implementations should not return this.\n - ARTIFACT_TYPE_OBJECT: Binary blob identified by a Storage Object.\n - ARTIFACT_TYPE_APP: Hosted static site deployed as a workload in the implementation's\nruntime.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "ARTIFACT_TYPE_UNSPECIFIED",
+              "ARTIFACT_TYPE_OBJECT",
+              "ARTIFACT_TYPE_APP"
+            ],
+            "default": "ARTIFACT_TYPE_UNSPECIFIED"
+          },
+          {
+            "name": "ownerId",
+            "description": "Optional owner filter. If set, only artifacts owned by this user\nare returned. Permitted values depend on implementation auth:\ntypically a non-admin caller may only set this to their own id.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "runId",
+            "description": "Optional run filter. If set, only artifacts produced during this\nrun are returned.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "description": "Maximum number of artifacts to return. The server may cap the\nvalue.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "pageToken",
+            "description": "Opaque pagination token from a previous ListArtifactsResponse.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "orderBy",
+            "description": "Implementation-defined order specification. Conventional format is\n\"\u003cfield\u003e \u003casc|desc\u003e\", for example \"created_at desc\".",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "sessionId",
+            "description": "Optional session filter. If set, only artifacts attached to this\nWorkers session are returned.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/internal/artifacts/{artifactId}/share": {
+      "post": {
+        "summary": "ShareArtifact grants or re-grants a permission on an artifact.\nOwner only.",
+        "operationId": "Artifacts_ShareArtifact2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ShareArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ArtifactsShareArtifactBody"
+            }
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/v1/internal/artifacts/{artifactId}/update": {
+      "put": {
+        "summary": "UpdateArtifact modifies metadata, visibility, and/or bytes of an\nexisting artifact. Owner or editor role required; public/private\ntoggles are owner-only.",
+        "operationId": "Artifacts_UpdateArtifact2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateArtifactResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "artifactId",
+            "description": "Target artifact identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ArtifactsUpdateArtifactBody"
+            }
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "ArtifactsShareArtifactBody": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User to grant access to."
+        },
+        "role": {
+          "$ref": "#/definitions/v1ArtifactRole",
+          "description": "Role to grant. ARTIFACT_ROLE_OWNER is rejected in v1."
+        }
+      },
+      "description": "ShareArtifactRequest is the request message for ShareArtifact.\n\nOnly the artifact owner may call ShareArtifact. Sharing is\nidempotent at the (artifact_id, user_id) pair: a repeated call with\na new role replaces the existing grant."
+    },
+    "ArtifactsUpdateArtifactBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Optional replacement display name."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional replacement description."
+        },
+        "public": {
+          "type": "boolean",
+          "description": "Optional new visibility. For app artifacts the implementation\nhandles the ingress toggle; for object artifacts this only changes\naccess enforcement, not the underlying Storage Object."
+        },
+        "htmlContent": {
+          "type": "string",
+          "description": "App-only: replacement HTML content. Ignored for objects."
+        },
+        "contentBytes": {
+          "type": "string",
+          "format": "byte",
+          "description": "Object-only: replacement blob bytes."
+        },
+        "contentType": {
+          "type": "string",
+          "description": "Object-only: MIME type of `content_bytes`. Required whenever\n`content_bytes` is non-empty."
+        },
+        "previewHtml": {
+          "type": "string",
+          "format": "byte",
+          "description": "Object-only: replacement companion preview HTML. Empty bytes\nexplicitly clears any prior preview."
+        },
+        "setPreviewHtml": {
+          "type": "boolean",
+          "description": "Whether `preview_html` is being set (true) or left alone (false).\nNeeded to distinguish \"clear the preview\" (set=true, bytes empty)\nfrom \"leave the preview\" (set=false)."
+        }
+      },
+      "description": "UpdateArtifactRequest is the request message for UpdateArtifact.\n\nAny field left unset is preserved. Callers supply `name`,\n`description`, and/or `public` to change metadata; `content` (apps)\nor `content_bytes` + `content_type` (objects) to rewrite the bytes.\n`preview_html` follows `content_bytes` and may be set independently\nfor objects to ship a new preview without rewriting the binary."
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1Artifact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Server-assigned identifier. Stable for the lifetime of the artifact."
+        },
+        "type": {
+          "$ref": "#/definitions/v1ArtifactType",
+          "description": "Whether this artifact is an object (blob) or an app (hosted static\nsite)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable display name. For object artifacts this is typically\nthe filename."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional short description supplied by the creator."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Identifier of the user who created the artifact. Treated opaquely;\nimplementations bind it to their auth identity model."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Identifier of the run during which this artifact was produced, or\nempty if the artifact was created outside a run (for example via a\ndirect user upload)."
+        },
+        "public": {
+          "type": "boolean",
+          "description": "When false (default) access is gated by ownership + permission\ngrants. When true, access is unauthenticated."
+        },
+        "objectBucket": {
+          "type": "string",
+          "description": "Object-only: the Storage Object holding the blob bytes. Empty for\napp artifacts."
+        },
+        "objectKey": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string",
+          "description": "Object-only: MIME type of the blob bytes. Empty for app artifacts."
+        },
+        "sizeBytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "Object-only: size of the blob in bytes, as reported by Storage\nafter finalization. Zero for app artifacts."
+        },
+        "hasPreview": {
+          "type": "boolean",
+          "description": "Object-only: whether a companion preview HTML was uploaded to the\nimplementation's preview key convention for this artifact. When\ntrue, GetArtifactPreviewURL will return a URL."
+        },
+        "appUrl": {
+          "type": "string",
+          "description": "App-only: URL at which the hosted workload serves content. For\nprivate apps this is the implementation's permission-gated proxy\nURL; for public apps this is the public ingress URL. Empty for\nobject artifacts."
+        },
+        "appStatus": {
+          "$ref": "#/definitions/v1DeploymentState",
+          "description": "App-only: deployment lifecycle state. DEPLOYMENT_STATE_UNSPECIFIED\nfor object artifacts."
+        },
+        "appStatusDetail": {
+          "type": "string",
+          "description": "App-only: optional free-form reason string accompanying FAILED\nstate."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time the artifact record was first created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time the artifact record was most recently updated."
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Workers session this artifact is attached to, or empty. Typically\nset on user-uploaded artifacts and left empty on worker-produced\nartifacts (which are scoped via run_id)."
+        }
+      },
+      "description": "Artifact is the metadata record for an agent-produced or user-uploaded\noutput. The blob bytes (for objects) and the hosted workload (for\napps) live elsewhere; this message describes what, who, and where."
+    },
+    "v1ArtifactPermission": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Server-assigned identifier for this grant."
+        },
+        "artifactId": {
+          "type": "string",
+          "description": "The artifact this grant applies to."
+        },
+        "userId": {
+          "type": "string",
+          "description": "The user the grant is made to."
+        },
+        "role": {
+          "$ref": "#/definitions/v1ArtifactRole",
+          "description": "The role granted. The implicit owner grant is not represented as a\nrow and will not be returned by ListArtifactPermissions."
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the grant was created."
+        }
+      },
+      "description": "ArtifactPermission is a single (artifact_id, user_id, role) grant. At\nmost one permission per (artifact_id, user_id) pair exists at any\ntime; re-granting a role replaces the prior grant."
+    },
+    "v1ArtifactRole": {
+      "type": "string",
+      "enum": [
+        "ARTIFACT_ROLE_UNSPECIFIED",
+        "ARTIFACT_ROLE_VIEWER",
+        "ARTIFACT_ROLE_EDITOR",
+        "ARTIFACT_ROLE_OWNER"
+      ],
+      "default": "ARTIFACT_ROLE_UNSPECIFIED",
+      "description": "ArtifactRole is the permission level granted to a user on an artifact.\n\n - ARTIFACT_ROLE_UNSPECIFIED: Proto3 default. Conforming implementations should not return this.\n - ARTIFACT_ROLE_VIEWER: Read-only access. May download / view / preview.\n - ARTIFACT_ROLE_EDITOR: Read + update access. May call UpdateArtifact. May not share,\ndelete, or toggle public/private.\n - ARTIFACT_ROLE_OWNER: Full control. Implicit on the creator and may not be granted via\nShareArtifact in v1."
+    },
+    "v1ArtifactType": {
+      "type": "string",
+      "enum": [
+        "ARTIFACT_TYPE_UNSPECIFIED",
+        "ARTIFACT_TYPE_OBJECT",
+        "ARTIFACT_TYPE_APP"
+      ],
+      "default": "ARTIFACT_TYPE_UNSPECIFIED",
+      "description": "ArtifactType distinguishes object artifacts (blob content served via\ndownload URL) from app artifacts (static sites served as a hosted\nworkload).\n\n - ARTIFACT_TYPE_UNSPECIFIED: Proto3 default. Conforming implementations should not return this.\n - ARTIFACT_TYPE_OBJECT: Binary blob identified by a Storage Object.\n - ARTIFACT_TYPE_APP: Hosted static site deployed as a workload in the implementation's\nruntime."
+    },
+    "v1CreateAppArtifactRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name for the app."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human description."
+        },
+        "htmlContent": {
+          "type": "string",
+          "description": "Self-contained HTML content. Implementations serve this as the\nentry document of the deployed app. CSS and JS must be inlined or\nreferenced by absolute URL; relative asset references are not\nsupported in v1."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Creator user id. See CreateObjectArtifactRequest.owner_id."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Run during which this artifact was produced, or empty."
+        },
+        "public": {
+          "type": "boolean",
+          "description": "Initial visibility. Defaults to false (private). Public apps are\nserved at the implementation's public endpoint without an\nauthentication check."
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "description": "Optional idempotency key."
+        }
+      },
+      "description": "CreateAppArtifactRequest is the request message for CreateAppArtifact."
+    },
+    "v1CreateAppArtifactResponse": {
+      "type": "object",
+      "properties": {
+        "artifact": {
+          "$ref": "#/definitions/v1Artifact",
+          "description": "The newly created artifact."
+        }
+      },
+      "description": "CreateAppArtifactResponse is the response message for\nCreateAppArtifact. The returned Artifact may be in\nDEPLOYMENT_STATE_PENDING — the caller should subscribe to Workers\nstreaming events for ARTIFACT_EVENT_TYPE_APP_DEPLOYED, or poll\nGetArtifact, to observe readiness."
+    },
+    "v1CreateObjectArtifactRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name / filename for the artifact (for example\n\"Q1-summary.pdf\"). Extensions are part of the name; Storage does\nnot infer MIME types from them."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human description."
+        },
+        "content": {
+          "type": "string",
+          "format": "byte",
+          "description": "The blob bytes. The implementation stores them as a Storage Object\nunder an implementation-defined (bucket, key) convention."
+        },
+        "contentType": {
+          "type": "string",
+          "description": "MIME type of `content`."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Creator user id. Implementations may derive this from auth context\nand ignore the field; worker callers supply it explicitly."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Run during which this artifact was produced, or empty."
+        },
+        "public": {
+          "type": "boolean",
+          "description": "Initial visibility. Defaults to false (private)."
+        },
+        "previewHtml": {
+          "type": "string",
+          "format": "byte",
+          "description": "Optional companion HTML rendering of the same content. When\nprovided, implementations upload it to their preview-key convention\nso GetArtifactPreviewURL returns a usable URL. Used by agent\nreport generators (PDF/DOCX/XLSX/PPTX) to ship an inline-viewable\npreview alongside the native binary format."
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "description": "Optional idempotency key. A repeat request with the same key from\nthe same caller within the implementation-defined window returns\nthe original response."
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Optional Workers session this artifact is attached to. Worker\ncallers typically set run_id instead."
+        }
+      },
+      "description": "CreateObjectArtifactRequest is the request message for\nCreateObjectArtifact. The caller supplies blob bytes inline; the\nimplementation is responsible for persisting them as a Storage\nObject.\n\nThis shape is a deliberate convenience for workers that produce small\nartifacts (reports, images, JSON documents) in-memory. Large uploads\nthat benefit from presigned URLs should call Storage's\nInitiateObjectUpload / FinalizeObjectUpload directly and then invoke\na future `RegisterObjectArtifact` variant; v1 of this spec does not\ndefine that RPC."
+    },
+    "v1CreateObjectArtifactResponse": {
+      "type": "object",
+      "properties": {
+        "artifact": {
+          "$ref": "#/definitions/v1Artifact",
+          "description": "The newly created artifact."
+        }
+      },
+      "description": "CreateObjectArtifactResponse is the response message for\nCreateObjectArtifact."
+    },
+    "v1DeleteArtifactResponse": {
+      "type": "object",
+      "description": "DeleteArtifactResponse is the response message for DeleteArtifact. It\nis intentionally empty."
+    },
+    "v1DeploymentState": {
+      "type": "string",
+      "enum": [
+        "DEPLOYMENT_STATE_UNSPECIFIED",
+        "DEPLOYMENT_STATE_PENDING",
+        "DEPLOYMENT_STATE_READY",
+        "DEPLOYMENT_STATE_FAILED"
+      ],
+      "default": "DEPLOYMENT_STATE_UNSPECIFIED",
+      "description": "DeploymentState is the lifecycle of an app artifact's hosted workload.\n\n - DEPLOYMENT_STATE_UNSPECIFIED: Proto3 default. Conforming implementations should not return this\nfor app artifacts once the initial deploy has started.\n - DEPLOYMENT_STATE_PENDING: The deploy has been accepted and the workload is being created.\n - DEPLOYMENT_STATE_READY: The workload is reachable at `app_url`.\n - DEPLOYMENT_STATE_FAILED: The most recent deploy or update failed. `app_status_detail` carries\nan implementation-specific reason."
+    },
+    "v1GetArtifactDownloadURLResponse": {
+      "type": "object",
+      "properties": {
+        "downloadUrl": {
+          "type": "string",
+          "description": "Presigned URL the caller can GET to fetch the blob bytes."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the URL becomes invalid."
+        }
+      },
+      "description": "GetArtifactDownloadURLResponse is the response message for\nGetArtifactDownloadURL."
+    },
+    "v1GetArtifactPreviewURLResponse": {
+      "type": "object",
+      "properties": {
+        "previewUrl": {
+          "type": "string",
+          "description": "Presigned URL the caller can GET to fetch the companion HTML\npreview."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the URL becomes invalid."
+        }
+      },
+      "description": "GetArtifactPreviewURLResponse is the response message for\nGetArtifactPreviewURL."
+    },
+    "v1GetArtifactResponse": {
+      "type": "object",
+      "properties": {
+        "artifact": {
+          "$ref": "#/definitions/v1Artifact",
+          "description": "The requested artifact."
+        }
+      },
+      "description": "GetArtifactResponse is the response message for GetArtifact."
+    },
+    "v1ListArtifactPermissionsResponse": {
+      "type": "object",
+      "properties": {
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ArtifactPermission"
+          },
+          "description": "All non-owner permissions currently granted on the artifact."
+        }
+      },
+      "description": "ListArtifactPermissionsResponse is the response message for\nListArtifactPermissions."
+    },
+    "v1ListArtifactsResponse": {
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Artifact"
+          },
+          "description": "Matching artifacts on this page."
+        },
+        "nextPageToken": {
+          "type": "string",
+          "description": "Opaque pagination token. Empty when there are no further results."
+        }
+      },
+      "description": "ListArtifactsResponse is the response message for ListArtifacts."
+    },
+    "v1RevokeArtifactShareResponse": {
+      "type": "object",
+      "description": "RevokeArtifactShareResponse is the response message for\nRevokeArtifactShare. It is intentionally empty."
+    },
+    "v1ShareArtifactResponse": {
+      "type": "object",
+      "properties": {
+        "permission": {
+          "$ref": "#/definitions/v1ArtifactPermission",
+          "description": "The resulting permission grant."
+        }
+      },
+      "description": "ShareArtifactResponse is the response message for ShareArtifact."
+    },
+    "v1UpdateArtifactResponse": {
+      "type": "object",
+      "properties": {
+        "artifact": {
+          "$ref": "#/definitions/v1Artifact",
+          "description": "The artifact after the update."
+        }
+      },
+      "description": "UpdateArtifactResponse is the response message for UpdateArtifact."
+    }
+  }
+}

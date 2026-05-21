@@ -1,4 +1,0 @@
-## Capabilities
-
-| Tool Name | Description |
-|-----------|-------------|

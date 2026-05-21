@@ -1,0 +1,74 @@
+fragment PolicyBinding on PolicyBinding {
+  id
+  group {
+    id
+    name
+  }
+  user {
+    id
+    name
+    email
+  }
+}
+
+fragment DnsDomain on DnsDomain {
+  id
+  name
+  creator {
+    ...User
+  }
+  accessPolicy {
+    id
+    bindings {
+      ...PolicyBinding
+    }
+  }
+  insertedAt
+}
+
+fragment OidcLogin on OidcLogin {
+  ip
+  country
+  city
+  latitude
+  longitude
+  user {
+    ...User
+  }
+  owner {
+    ...User
+  }
+  repository {
+    ...Repo
+  }
+  insertedAt
+}
+
+query GenerateLicenseKey {
+  licenseKey
+}
+
+query ConsumerEmailDomains {
+  account {
+    consumerEmailDomains
+  }
+}
+
+mutation UpdateAccount($attributes: AccountAttributes!) {
+  updateAccount(attributes: $attributes) {
+    ...Account
+    domainMappings {
+      ...DomainMapping
+    }
+  }
+}
+
+mutation BeginTrial {
+  beginTrial {
+    id
+    trialUntil
+    plan {
+      ...PlatformPlan
+    }
+  }
+}

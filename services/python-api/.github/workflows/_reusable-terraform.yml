@@ -1,0 +1,238 @@
+---
+# Reusable workflow: Terraform plan + apply with OIDC cloud auth
+# Supports AWS, Azure, GCP.  apply job requires a GitHub environment gate.
+name: Reusable — Terraform Plan / Apply
+
+on:
+  workflow_call:
+    inputs:
+      cloud:
+        description: "Target cloud provider: aws | azure | gcp"
+        type: string
+        required: true
+      environment:
+        description: "Deployment environment: dev | staging | prod"
+        type: string
+        required: true
+      working_directory:
+        description: "Directory that contains the Terraform root module"
+        type: string
+        required: false
+        default: "terraform"
+      apply:
+        description: "Run terraform apply after a successful plan"
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      # AWS
+      AWS_ROLE_ARN:
+        required: false
+      # Azure
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_SUBSCRIPTION_ID:
+        required: false
+      # GCP
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: false
+      GCP_SERVICE_ACCOUNT:
+        required: false
+    outputs:
+      plan_artifact:
+        description: "Name of the uploaded plan artifact"
+        value: ${{ jobs.plan.outputs.artifact_name }}
+
+jobs:
+  # ── Plan ────────────────────────────────────────────────────────────────────
+  plan:
+    name: Terraform Plan (${{ inputs.environment }})
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      id-token: write       # OIDC token for cloud auth
+      pull-requests: write  # post plan output as PR comment
+
+    outputs:
+      artifact_name: ${{ steps.set-artifact.outputs.name }}
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269ef065  # v3.1.2
+        with:
+          terraform_version: "~1.9"
+          terraform_wrapper: false
+
+      # ── Cloud auth (OIDC, no stored long-lived credentials) ─────────────────
+
+      - name: Authenticate to AWS via OIDC
+        if: inputs.cloud == 'aws'
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6542b4f84535c441e3d96597d  # v4.0.2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: terraform-${{ inputs.environment }}-${{ github.run_id }}
+
+      - name: Authenticate to Azure via OIDC
+        if: inputs.cloud == 'azure'
+        uses: azure/login@a65d910e8af852a8061c627c456678983e180302  # v2.2.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        if: inputs.cloud == 'gcp'
+        uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f  # v2.1.7
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # ── Terraform ────────────────────────────────────────────────────────────
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init \
+            -input=false \
+            -backend-config="key=${{ inputs.environment }}/terraform.tfstate"
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan \
+            -input=false \
+            -no-color \
+            -var="environment=${{ inputs.environment }}" \
+            -out=tfplan.binary \
+            2>&1 | tee plan.txt
+        continue-on-error: false
+
+      - name: Convert binary plan to JSON (for auditing)
+        run: terraform show -json tfplan.binary > tfplan.json
+
+      - name: Set artifact name
+        id: set-artifact
+        run: echo "name=tfplan-${{ inputs.environment }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload plan artifacts
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b  # v4.5.0
+        with:
+          name: ${{ steps.set-artifact.outputs.name }}
+          path: |
+            ${{ inputs.working_directory }}/tfplan.binary
+            ${{ inputs.working_directory }}/tfplan.json
+            ${{ inputs.working_directory }}/plan.txt
+          retention-days: 7
+
+      - name: Post plan summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('${{ inputs.working_directory }}/plan.txt', 'utf8');
+            const maxLen = 65000;
+            const truncated = plan.length > maxLen ? plan.slice(0, maxLen) + '\n\n... truncated ...' : plan;
+            const body = `## Terraform Plan — \`${{ inputs.environment }}\`\n\n\`\`\`hcl\n${truncated}\n\`\`\``;
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+  # ── Apply ────────────────────────────────────────────────────────────────────
+  apply:
+    name: Terraform Apply (${{ inputs.environment }})
+    needs: plan
+    if: inputs.apply == true
+    runs-on: ubuntu-24.04
+
+    # GitHub Environment provides manual approval gate for staging/prod
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269ef065  # v3.1.2
+        with:
+          terraform_version: "~1.9"
+          terraform_wrapper: false
+
+      - name: Authenticate to AWS via OIDC
+        if: inputs.cloud == 'aws'
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6542b4f84535c441e3d96597d  # v4.0.2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: terraform-apply-${{ inputs.environment }}-${{ github.run_id }}
+
+      - name: Authenticate to Azure via OIDC
+        if: inputs.cloud == 'azure'
+        uses: azure/login@a65d910e8af852a8061c627c456678983e180302  # v2.2.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        if: inputs.cloud == 'gcp'
+        uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f  # v2.1.7
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -input=false \
+            -backend-config="key=${{ inputs.environment }}/terraform.tfstate"
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444306234b7fd0cf6b1f1f40  # v4.1.8
+        with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: ${{ inputs.working_directory }}
+
+      - name: Terraform Apply
+        run: |
+          terraform apply \
+            -input=false \
+            -auto-approve \
+            tfplan.binary
+
+      - name: Write apply summary
+        run: |
+          echo "## Terraform Apply — \`${{ inputs.environment }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Applied at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_STEP_SUMMARY"
+          echo "Run ID: ${{ github.run_id }}" >> "$GITHUB_STEP_SUMMARY"

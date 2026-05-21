@@ -1,0 +1,242 @@
+{{- /* nightshift-api as a StatefulSet — rendered only when records
+       backend is sqlite (per-pod SQLite PVC requires stable identity).
+       For postgres mode, see deployment.yaml. */ -}}
+{{- if eq (.Values.nightshift_api.recordsBackend | default "sqlite") "sqlite" }}
+{{- $name := include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-api") }}
+{{- $isFs := eq .Values.nightshift_api.objectsBackend "filesystem" }}
+{{- $isS3 := eq .Values.nightshift_api.objectsBackend "s3" }}
+{{- /* Pick the Secret that exposes MINIO_ROOT_USER + MINIO_ROOT_PASSWORD
+       as env vars consumed by the API as NS_S3_ACCESS_KEY_ID +
+       NS_S3_SECRET_ACCESS_KEY. The bundled MinIO Secret is preferred
+       when minio.enabled; otherwise operators name their own. */ -}}
+{{- $s3CredsSecret := "" }}
+{{- if $isS3 }}
+  {{- if .Values.minio.enabled }}{{ $s3CredsSecret = include "nightshift.minioFullname" . }}{{ end }}
+  {{- if .Values.nightshift_api.s3.credentialsSecret }}{{ $s3CredsSecret = .Values.nightshift_api.s3.credentialsSecret }}{{ end }}
+  {{- if not $s3CredsSecret }}
+  {{- fail "nightshift_api.s3.credentialsSecret is required when objectsBackend=s3 and minio.enabled is false. Provide a Secret name exposing MINIO_ROOT_USER and MINIO_ROOT_PASSWORD keys." }}
+  {{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nightshift-api
+spec:
+  serviceName: {{ $name }}
+  replicas: {{ .Values.nightshift_api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nightshift.selectorLabels" (dict "Release" .Release "component" "nightshift-api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nightshift.selectorLabels" (dict "Release" .Release "component" "nightshift-api") | nindent 8 }}
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/part-of: nightshift
+        {{- if .Values.tenant.name }}
+        tenant: {{ .Values.tenant.name }}
+        {{- end }}
+      annotations:
+        # Force a pod roll when the ConfigMap or Secret changes.
+        checksum/config: {{ include (print $.Template.BasePath "/nightshift-api/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/nightshift-api/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ $name }}
+      securityContext:
+        {{- toYaml .Values.nightshift_api.podSecurityContext | nindent 8 }}
+      {{- if and $isS3 .Values.minio.enabled }}
+      {{- $minio := include "nightshift.minioFullname" . }}
+      {{- $endpoint := include "nightshift.minioEndpoint" . }}
+      initContainers:
+        - name: minio-bucket-init
+          image: "{{ .Values.minio.mc.repository }}:{{ .Values.minio.mc.tag }}"
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          # mc resolves its config dir from $HOME; the image has no
+          # /etc/passwd entry for uid 1000, so HOME defaults to "/" and
+          # mc tries to write `/.mc` against the read-only root. Pin
+          # HOME so it lands on the writable emptyDir mount.
+          env:
+            - name: HOME
+              value: /home/mc
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minio }}
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minio }}
+                  key: MINIO_ROOT_PASSWORD
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              for i in $(seq 1 60); do
+                if mc alias set ns "{{ $endpoint }}" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; then
+                  break
+                fi
+                echo "waiting for MinIO ($i)..."
+                sleep 2
+              done
+              mc alias set ns "{{ $endpoint }}" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              mc mb --ignore-existing "ns/{{ .Values.minio.bucket }}"
+              echo "bucket ready: {{ .Values.minio.bucket }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: mc-config
+              mountPath: /home/mc/.mc
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "nightshift.apiImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.nightshift_api.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: {{ $name }}
+            - secretRef:
+                name: {{ $name }}
+          {{- if or $isS3 .Values.openbao.enabled }}
+          env:
+            {{- if $isS3 }}
+            # Map the MinIO root creds (or an operator-supplied
+            # equivalent Secret) to the NS_S3_* env vars the server
+            # reads. Same Secret references the same keys whether the
+            # bundled MinIO mints them or an external secret carries
+            # them — operators just match the key names.
+            - name: NS_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s3CredsSecret }}
+                  key: MINIO_ROOT_USER
+            - name: NS_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s3CredsSecret }}
+                  key: MINIO_ROOT_PASSWORD
+            {{- end }}
+            {{- if .Values.openbao.enabled }}
+            # NS_OIDC_AUDIENCE is the OIDC client_id minted by OpenBao
+            # and published by the bootstrap Job. When chunk-19 UI is
+            # enabled, the UI is the originator of every authenticated
+            # user request — its tokens carry aud=<ui-client-id>, so
+            # the API must verify against THAT client. Kubelet blocks
+            # the container from starting until the relevant Secret
+            # exists, which keys the API's startup off the bootstrap
+            # completing.
+            - name: NS_OIDC_AUDIENCE
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.ui.enabled }}
+                  name: {{ include "nightshift.openbaoOidcUiClientSecret" . }}
+                  {{- else }}
+                  name: {{ include "nightshift.openbaoOidcClientSecret" . }}
+                  {{- end }}
+                  key: client_id
+            {{- end }}
+          {{- end }}
+          volumeMounts:
+            - name: db
+              mountPath: /var/lib/nightshift/db
+            {{- if $isFs }}
+            - name: objects
+              mountPath: /var/lib/nightshift/objects
+            {{- end }}
+            - name: secrets
+              mountPath: /etc/nightshift/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- if and (eq .Values.nightshift_api.sessionState.backend "pvc") .Values.nightshift_api.sessionState.pvc.enabled }}
+            - name: session-state
+              mountPath: {{ .Values.nightshift_api.sessionState.mountPath | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.nightshift_api.resources | nindent 12 }}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ $name }}
+            items:
+              - key: secrets.yaml
+                path: secrets.yaml
+        - name: tmp
+          emptyDir: {}
+        {{- if and $isS3 .Values.minio.enabled }}
+        - name: mc-config
+          emptyDir: {}
+        {{- end }}
+        {{- if and (eq .Values.nightshift_api.sessionState.backend "pvc") .Values.nightshift_api.sessionState.pvc.enabled }}
+        - name: session-state
+          persistentVolumeClaim:
+            claimName: {{ printf "%s-session-state" $name }}
+        {{- end }}
+      {{- with .Values.nightshift_api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nightshift_api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nightshift_api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: db
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.nightshift_api.storage.db.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.nightshift_api.storage.db.size }}
+    {{- if $isFs }}
+    - metadata:
+        name: objects
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.nightshift_api.storage.objects.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.nightshift_api.storage.objects.size }}
+    {{- end }}
+{{- end }}

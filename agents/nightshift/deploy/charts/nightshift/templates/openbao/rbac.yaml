@@ -1,0 +1,30 @@
+{{- if .Values.openbao.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: openbao
+---
+# system:auth-delegator lets OpenBao POST TokenReview to verify pod
+# SA tokens during the kubernetes auth method. The ClusterRoleBinding
+# carries the namespace in its name so multiple tenant namespaces
+# can each install the chart without colliding on the binding name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-tokenreview-{{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: openbao
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: openbao
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,118 @@
+import json
+import yaml
+import logging
+from datetime import datetime
+from typing import Any, List
+
+from holmes.config import Config
+from holmes.core.supabase_dal import SupabaseDal
+from holmes.core.tools import PrerequisiteCacheMode, Toolset, ToolsetDBModel, ToolsetTag
+from holmes.plugins.prompts import load_and_render_prompt
+from holmes.plugins.toolsets.mcp.toolset_mcp import RemoteMCPToolset
+
+
+def log_toolsets_statuses(toolsets: List[Toolset]):
+    enabled_toolsets = [
+        toolset.name for toolset in toolsets if toolset.status.value == "enabled"
+    ]
+    disabled_toolsets = [
+        toolset.name for toolset in toolsets if toolset.status.value != "enabled"
+    ]
+    logging.info(f"Enabled toolsets: {enabled_toolsets}")
+    logging.info(f"Disabled toolsets: {disabled_toolsets}")
+
+
+def holmes_sync_toolsets_status(dal: SupabaseDal, config: Config) -> None:
+    """
+    Method for synchronizing toolsets with the database:
+    1) Fetch all built-in toolsets from the holmes/plugins/toolsets directory
+    2) Load custom toolsets defined in /etc/holmes/config/custom_toolset.yaml
+    3) Override default toolsets with corresponding custom configurations
+       and add any new custom toolsets that are not part of the defaults
+    4) Run the check_prerequisites method for each toolset
+    5) Use sync_toolsets to upsert toolset's status and remove toolsets that are not loaded from configs or folder with default directory
+    """
+    tool_executor = config.create_tool_executor(
+        dal,
+        toolset_tag_filter=[ToolsetTag.CORE, ToolsetTag.CLUSTER],
+        enable_all_toolsets_possible=False,
+        prerequisite_cache=PrerequisiteCacheMode.DISABLED,
+        reuse_executor=True,
+    )
+
+    if not config.cluster_name:
+        raise Exception(
+            "Cluster name is missing in the configuration. Please ensure 'CLUSTER_NAME' is defined in the environment variables, "
+            "or verify that a cluster name is provided in the Robusta configuration file."
+        )
+
+    db_toolsets = []
+    updated_at = datetime.now().isoformat()
+    for toolset in tool_executor.toolsets:
+        # hiding disabled experimental toolsets from the docs
+        if toolset.experimental and not toolset.enabled:
+            continue
+
+        if not toolset.installation_instructions:
+            instructions = get_config_schema_for_toolset(toolset)
+            toolset.installation_instructions = instructions
+        # Use toolset's own meta if set (e.g., database with subtype),
+        # otherwise fall back to writing the toolset type if available.
+        meta = toolset.meta
+        if meta is None and toolset.type:
+            meta = {"type": toolset.type.value}
+        if isinstance(toolset, RemoteMCPToolset):
+            oauth_config = toolset.get_oauth_config()
+            if oauth_config:
+                meta = meta or {}
+                meta["oauth_config"] = oauth_config
+
+        db_toolsets.append(
+            ToolsetDBModel(
+                toolset_name=toolset.name,
+                cluster_id=config.cluster_name,
+                account_id=dal.account_id,
+                updated_at=updated_at,
+                icon_url=toolset.icon_url,
+                status=toolset.status.value if toolset.status else None,
+                error=toolset.error,
+                description=toolset.description,
+                docs_url=toolset.docs_url,
+                installation_instructions=toolset.installation_instructions,
+                meta=meta,
+            ).model_dump()
+        )
+    dal.sync_toolsets(db_toolsets, config.cluster_name)
+    log_toolsets_statuses(tool_executor.toolsets)
+
+
+def get_config_schema_for_toolset(toolset: Toolset) -> str:
+    res: dict = {
+        "example_yaml": render_default_installation_instructions_for_toolset(toolset),
+        "schema": toolset.get_config_schema(),
+    }
+    return json.dumps(res)
+
+def render_default_installation_instructions_for_toolset(toolset: Toolset) -> str:
+    env_vars = toolset.get_environment_variables()
+    context: dict[str, Any] = {
+        "env_vars": env_vars if env_vars else [],
+        "toolset_name": toolset.name,
+    }
+
+    example_config = toolset.get_config_example()
+    if example_config:
+        context["example_config"] = yaml.dump(example_config)
+
+    # Emit top-level `subtype:` in the example YAML for multi-variant toolsets
+    # (e.g. Prometheus, Database) so users who copy the example verbatim land
+    # on the correct variant. The ToolsetConfig subclass declares `_subtype`.
+    if toolset.config_classes:
+        subtype = getattr(toolset.config_classes[0], "_subtype", None)
+        if subtype:
+            context["subtype"] = subtype
+
+    installation_instructions = load_and_render_prompt(
+        "file://holmes/utils/default_toolset_installation_guide.jinja2", context
+    )
+    return installation_instructions

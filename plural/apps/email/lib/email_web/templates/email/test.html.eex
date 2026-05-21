@@ -1,5 +1,0 @@
-<%= row do %>
-  <%= text do %>
-    This is just a test email for <%= @user.email %>
-  <% end %>
-<% end %>

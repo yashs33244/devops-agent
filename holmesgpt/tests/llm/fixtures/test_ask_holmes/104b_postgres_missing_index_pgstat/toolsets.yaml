@@ -1,9 +1,0 @@
-toolsets:
-  bash:
-    enabled: true
-    config:
-      kubectl:
-        allowed_images:
-          - image: postgres:15-alpine
-            allowed_commands:
-              - psql

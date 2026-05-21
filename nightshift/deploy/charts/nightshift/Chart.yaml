@@ -1,7 +1,0 @@
-apiVersion: v2
-name: nightshift
-description: Nightshift reference implementation nightshift-api, optional Cilium NetworkPolicy + Tetragon TracingPolicy on worker pods, bundled MinIO for the chart's S3-backed quick-start, and bundled OpenBao as the OIDC identity provider.
-type: application
-version: 0.3.0
-appVersion: "0.3.0"
-kubeVersion: ">=1.28.0-0"

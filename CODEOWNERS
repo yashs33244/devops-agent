@@ -1,0 +1,17 @@
+# Global fallback
+*                          @yashs33244
+
+# Orchestration layer
+/tools/                    @yashs33244
+/templates/                @yashs33244
+/services/                 @yashs33244
+
+# Sub-agents (separate ownership so PRs auto-request the right reviewer)
+/agents/holmesgpt/         @yashs33244
+/agents/kagent/            @yashs33244
+/agents/nightshift/        @yashs33244
+/agents/opensre/           @yashs33244
+/agents/plural/            @yashs33244
+
+# CI/CD — require owner review on all workflow changes
+/.github/                  @yashs33244

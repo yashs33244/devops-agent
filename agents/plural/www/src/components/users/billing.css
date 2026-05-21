@@ -1,0 +1,15 @@
+.card .delete {
+  display: none !important;
+}
+
+.card:hover .delete {
+  display: flex !important;
+}
+
+.card.no-delete .delete {
+  display: none !important;
+}
+
+.card {
+  width: 300px;
+}

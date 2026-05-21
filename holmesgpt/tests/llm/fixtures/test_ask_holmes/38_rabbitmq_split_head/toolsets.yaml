@@ -1,9 +1,0 @@
-toolsets:
-  rabbitmq/core:
-    enabled: true
-    config:
-      clusters:
-        - id: rabbitmq
-          username: user
-          password: "{{env.RABBITMQ_PASSWORD}}"
-          api_url: http://localhost:15672

@@ -1,0 +1,925 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "nightshift/v1/workers.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "Workers"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/internal/runs/{runId}/cancellation": {
+      "get": {
+        "summary": "GetRunCancellation is the worker's cancellation-polling RPC.\nWorkers SHOULD call this periodically during execution and\ngracefully terminate the agent when `cancelled = true`.",
+        "operationId": "Workers_GetRunCancellation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetRunCancellationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "description": "Target run identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/internal/runs/{runId}/events": {
+      "post": {
+        "summary": "PostWorkerEvent is the worker's push channel: each SDK message\n(or worker-emitted lifecycle signal) becomes a StreamEvent and\nis persisted + broadcast to streaming subscribers.",
+        "operationId": "Workers_PostWorkerEvent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PostWorkerEventResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "description": "Target run identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkersPostWorkerEventBody"
+            }
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/internal/runs/{runId}:complete": {
+      "post": {
+        "summary": "CompleteRun is the worker's success-terminal signal. Includes\nthe Nightshift session_id and the RunUsage summary from the\nagent SDK's terminal message.",
+        "operationId": "Workers_CompleteRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CompleteRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "description": "Target run identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkersCompleteRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/internal/runs/{runId}:fail": {
+      "post": {
+        "summary": "FailRun is the worker's failure-terminal signal.",
+        "operationId": "Workers_FailRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FailRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "description": "Target run identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkersFailRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/runs": {
+      "get": {
+        "summary": "ListRuns returns runs matching the supplied filters.",
+        "operationId": "Workers_ListRuns",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListRunsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "userId",
+            "description": "Optional filter: only return runs owned by this user.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "Optional filter: only return runs with this status.\n\n - RUN_STATUS_UNSPECIFIED: Proto3 default. Conforming implementations should not return this.\n - RUN_STATUS_PENDING: The run record has been created but execution has not begun.\nImplementations transition runs from PENDING to RUNNING once the\nunderlying workload (for example a Kubernetes Job) has started.\n - RUN_STATUS_RUNNING: The run is executing. Events are being posted through the worker\ncallback surface and forwarded to streaming subscribers.\n - RUN_STATUS_COMPLETED: The run finished successfully. `session_id` and `usage` are\npopulated on the Run record.\n - RUN_STATUS_ERROR: The run finished unsuccessfully. `error` is populated with an\nimplementation-supplied message.\n - RUN_STATUS_INTERRUPTED: The run was cancelled before natural completion, either by an\nexplicit `InterruptRun` call or by an implementation-side\ntimeout / deadline. `error` MAY carry a reason.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "RUN_STATUS_UNSPECIFIED",
+              "RUN_STATUS_PENDING",
+              "RUN_STATUS_RUNNING",
+              "RUN_STATUS_COMPLETED",
+              "RUN_STATUS_ERROR",
+              "RUN_STATUS_INTERRUPTED"
+            ],
+            "default": "RUN_STATUS_UNSPECIFIED"
+          },
+          {
+            "name": "sessionId",
+            "description": "Optional filter: only return runs for this session_id.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "invokerType",
+            "description": "Optional filter: only return runs invoked by this (type, id)\npair. Setting `invoker_type` without `invoker_id` filters on\ntype alone.\n\n - INVOKER_TYPE_UNSPECIFIED: Proto3 default. Conforming implementations should not return this.\n - INVOKER_TYPE_USER: A human user created the run directly. `invoker_id` is the\nuser's identifier.\n - INVOKER_TYPE_SCHEDULE: A schedule (see chunk 7 Scheduling) fired and created the run on\nthe owning user's behalf. `invoker_id` is the schedule\nidentifier.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "INVOKER_TYPE_UNSPECIFIED",
+              "INVOKER_TYPE_USER",
+              "INVOKER_TYPE_SCHEDULE"
+            ],
+            "default": "INVOKER_TYPE_UNSPECIFIED"
+          },
+          {
+            "name": "invokerId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "description": "Maximum number of runs to return. The server may cap the value.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "pageToken",
+            "description": "Opaque pagination token.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "orderBy",
+            "description": "Implementation-defined order specification. Conventional format\nis `\"\u003cfield\u003e \u003casc|desc\u003e\"`, for example `\"created_at desc\"`.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      },
+      "post": {
+        "summary": "CreateRun creates a run record, reserves a session identifier,\nand launches the underlying run workload.",
+        "operationId": "Workers_CreateRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "CreateRunRequest is the request message for CreateRun.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateRunRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/runs/session/{sessionId}": {
+      "delete": {
+        "summary": "DeleteSession removes every run with the given session_id and\nthe underlying SDK session state. Irreversible.",
+        "operationId": "Workers_DeleteSession",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteSessionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "description": "Target session identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/runs/{runId}": {
+      "get": {
+        "summary": "GetRun returns a single run's metadata.",
+        "operationId": "Workers_GetRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "description": "Target run identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/runs/{runId}/events": {
+      "get": {
+        "summary": "ListRunEvents returns a paginated history of events for a run\nwithout streaming. Useful for offline inspection and tests.",
+        "operationId": "Workers_ListRunEvents",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListRunEventsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "description": "Target run identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "fromIndex",
+            "description": "Optional lower-bound index filter.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "Maximum number of events to return. The server may cap the\nvalue.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "pageToken",
+            "description": "Opaque pagination token.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/runs/{runId}/events:stream": {
+      "get": {
+        "summary": "StreamRunEvents is a server-streaming RPC that delivers every\nevent from a run. Defaults to replaying all persisted events\nfollowed by live events until the run terminates.",
+        "operationId": "Workers_StreamRunEvents",
+        "responses": {
+          "200": {
+            "description": "A successful response.(streaming responses)",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "result": {
+                  "$ref": "#/definitions/v1StreamRunEventsResponse"
+                },
+                "error": {
+                  "$ref": "#/definitions/rpcStatus"
+                }
+              },
+              "title": "Stream result of v1StreamRunEventsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "description": "Target run identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "includeHistory",
+            "description": "When true (the default effective behavior for new subscribers),\nthe server replays all persisted events for the run before\nstreaming live events. When false, only events produced after\nthe subscription MAY be delivered. Implementations that cannot\nselectively suppress history SHOULD accept the field and ignore\nit.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "fromIndex",
+            "description": "Optional lower-bound index filter. When non-zero, only events\nwith `index \u003e= from_index` are delivered.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/runs/{runId}:interrupt": {
+      "post": {
+        "summary": "InterruptRun signals cancellation. The run reaches\nRUN_STATUS_INTERRUPTED asynchronously; callers observe the\ntransition via StreamRunEvents or a subsequent GetRun.",
+        "operationId": "Workers_InterruptRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1InterruptRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "description": "Target run identifier.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkersInterruptRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    },
+    "/v1/sessions": {
+      "post": {
+        "summary": "CreateSession mints a fresh session identifier without launching\na run.",
+        "operationId": "Workers_CreateSession",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateSessionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "CreateSessionRequest is the request message for CreateSession.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateSessionRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Workers"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "WorkersCompleteRunBody": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "description": "Nightshift session identifier the worker was running under. The\nimplementation persists this on the Run so the next run\ncontinuing the conversation can reference it."
+        },
+        "usage": {
+          "$ref": "#/definitions/v1RunUsage",
+          "description": "Cost + token usage captured from the agent SDK's terminal\nmessage."
+        }
+      },
+      "description": "CompleteRunRequest is the request message for CompleteRun. Called\nby the worker when the agent finishes successfully."
+    },
+    "WorkersFailRunBody": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string",
+          "description": "Free-form error message. Preserved on the Run."
+        }
+      },
+      "description": "FailRunRequest is the request message for FailRun. Called by the\nworker when the agent fails to complete."
+    },
+    "WorkersInterruptRunBody": {
+      "type": "object",
+      "description": "InterruptRunRequest is the request message for InterruptRun."
+    },
+    "WorkersPostWorkerEventBody": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "$ref": "#/definitions/v1StreamEvent",
+          "description": "The event being posted. Implementations MUST assign a monotonic\n`index` server-side; the value on the incoming event is ignored."
+        }
+      },
+      "description": "PostWorkerEventRequest is the request message for PostWorkerEvent.\nCalled by the run workload (for example a Kubernetes Job pod) to\npush a single event back to the control plane."
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "protobufNullValue": {
+      "type": "string",
+      "enum": [
+        "NULL_VALUE"
+      ],
+      "default": "NULL_VALUE",
+      "description": "`NullValue` is a singleton enumeration to represent the null value for the\n`Value` type union.\n\nThe JSON representation for `NullValue` is JSON `null`.\n\n - NULL_VALUE: Null value."
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1CompleteRunResponse": {
+      "type": "object",
+      "description": "CompleteRunResponse is the response message for CompleteRun. It is\nintentionally empty — the terminal state is visible on the Run via\nGetRun."
+    },
+    "v1CreateRunRequest": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "Task instruction."
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Optional Nightshift session id to continue an existing multi-\nturn conversation. Empty means start a new session; the created\nrun's `session_id` will be assigned by the implementation at\ncompletion time."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owning user. Implementations typically derive this from the\ncaller's auth principal; it is carried explicitly on the request\nso internal callers (for example a Scheduling service firing a\ncron) can attribute runs to the owning user."
+        },
+        "invokerType": {
+          "$ref": "#/definitions/v1InvokerType",
+          "description": "Categorization of who is creating this run."
+        },
+        "invokerId": {
+          "type": "string",
+          "description": "Identifier of the triggering entity, per InvokerType semantics."
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "description": "Optional idempotency key."
+        }
+      },
+      "description": "CreateRunRequest is the request message for CreateRun."
+    },
+    "v1CreateRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1Run",
+          "description": "The newly created run. Typically in RUN_STATUS_PENDING; may be\nRUN_STATUS_RUNNING already if the implementation's launch path\nis synchronous."
+        }
+      },
+      "description": "CreateRunResponse is the response message for CreateRun."
+    },
+    "v1CreateSessionRequest": {
+      "type": "object",
+      "description": "CreateSessionRequest is the request message for CreateSession."
+    },
+    "v1CreateSessionResponse": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "description": "CreateSessionResponse is the response message for CreateSession."
+    },
+    "v1DeleteSessionResponse": {
+      "type": "object",
+      "properties": {
+        "runsDeleted": {
+          "type": "string",
+          "format": "int64",
+          "description": "Number of run records removed."
+        }
+      },
+      "description": "DeleteSessionResponse is the response message for DeleteSession."
+    },
+    "v1FailRunResponse": {
+      "type": "object",
+      "description": "FailRunResponse is the response message for FailRun. It is\nintentionally empty."
+    },
+    "v1GetRunCancellationResponse": {
+      "type": "object",
+      "properties": {
+        "cancelled": {
+          "type": "boolean",
+          "description": "Whether the control plane has requested cancellation of this\nrun. Once true, the worker should invoke its SDK's interrupt\npath, drain in-flight events, and call CompleteRun or FailRun as\nappropriate."
+        }
+      },
+      "description": "GetRunCancellationResponse is the response message for\nGetRunCancellation."
+    },
+    "v1GetRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1Run",
+          "description": "The requested run."
+        }
+      },
+      "description": "GetRunResponse is the response message for GetRun."
+    },
+    "v1InterruptRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1Run",
+          "description": "The run after the interrupt signal has been recorded."
+        }
+      },
+      "description": "InterruptRunResponse is the response message for InterruptRun. The\nreturned Run reflects the post-interrupt state; for asynchronous\nimplementations the status may still be RUN_STATUS_RUNNING until\nthe worker observes the cancellation signal — callers observe the\ntransition to RUN_STATUS_INTERRUPTED via the event stream or a\nsubsequent GetRun."
+    },
+    "v1InvokerType": {
+      "type": "string",
+      "enum": [
+        "INVOKER_TYPE_UNSPECIFIED",
+        "INVOKER_TYPE_USER",
+        "INVOKER_TYPE_SCHEDULE"
+      ],
+      "default": "INVOKER_TYPE_UNSPECIFIED",
+      "description": "InvokerType categorizes who or what triggered a run. It is load-\nbearing for billing attribution, audit, and rate limiting.\n\n - INVOKER_TYPE_UNSPECIFIED: Proto3 default. Conforming implementations should not return this.\n - INVOKER_TYPE_USER: A human user created the run directly. `invoker_id` is the\nuser's identifier.\n - INVOKER_TYPE_SCHEDULE: A schedule (see chunk 7 Scheduling) fired and created the run on\nthe owning user's behalf. `invoker_id` is the schedule\nidentifier."
+    },
+    "v1ListRunEventsResponse": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1StreamEvent"
+          },
+          "description": "Matching events on this page, ordered by ascending index."
+        },
+        "nextPageToken": {
+          "type": "string",
+          "description": "Opaque pagination token. Empty when there are no further\nresults."
+        }
+      },
+      "description": "ListRunEventsResponse is the response message for ListRunEvents."
+    },
+    "v1ListRunsResponse": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Run"
+          },
+          "description": "Matching runs on this page."
+        },
+        "nextPageToken": {
+          "type": "string",
+          "description": "Opaque pagination token. Empty when there are no further\nresults."
+        }
+      },
+      "description": "ListRunsResponse is the response message for ListRuns."
+    },
+    "v1PostWorkerEventResponse": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "string",
+          "format": "int64",
+          "description": "The server-assigned index the event was persisted at."
+        }
+      },
+      "description": "PostWorkerEventResponse is the response message for PostWorkerEvent."
+    },
+    "v1Run": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Server-assigned identifier. Stable for the lifetime of the run."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "The task instruction the agent was launched with. Preserved\nverbatim so runs are reproducible and auditable."
+        },
+        "status": {
+          "$ref": "#/definitions/v1RunStatus",
+          "description": "Current lifecycle state. See RunStatus."
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Nightshift-owned session identifier, used to resume a multi-turn\nconversation across runs. Implementations map this to whatever\nsession identifier the agent SDK uses internally; the spec does\nNOT expose the SDK session id. Empty until the first completed\nrun sets it (or until `CreateRun` is called with an explicit\n`session_id` to continue an existing conversation)."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owning user. Credentials, artifacts, per-user state (see chunk 8)\nare all scoped to this value."
+        },
+        "invokerType": {
+          "$ref": "#/definitions/v1InvokerType",
+          "description": "Categorization of who triggered this run."
+        },
+        "invokerId": {
+          "type": "string",
+          "description": "Identifier of the triggering entity, interpretation depends on\ninvoker_type. For INVOKER_TYPE_USER this is a user id; for\nINVOKER_TYPE_SCHEDULE this is a schedule id."
+        },
+        "error": {
+          "type": "string",
+          "description": "Populated with an implementation-supplied message when status is\nRUN_STATUS_ERROR or RUN_STATUS_INTERRUPTED."
+        },
+        "eventCount": {
+          "type": "string",
+          "format": "int64",
+          "description": "Number of events persisted for this run. Grows monotonically\nduring RUNNING and is frozen at a terminal status."
+        },
+        "usage": {
+          "$ref": "#/definitions/v1RunUsage",
+          "description": "Aggregate resource usage captured at completion. Zero-valued\nuntil a run reaches RUN_STATUS_COMPLETED."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time the run record was created."
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time the run transitioned from PENDING to RUNNING. Zero value if\nthe run never started."
+        },
+        "endedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time the run reached a terminal status. Zero value while the run\nis PENDING or RUNNING."
+        }
+      },
+      "description": "Run is the metadata record for a single agent execution."
+    },
+    "v1RunStatus": {
+      "type": "string",
+      "enum": [
+        "RUN_STATUS_UNSPECIFIED",
+        "RUN_STATUS_PENDING",
+        "RUN_STATUS_RUNNING",
+        "RUN_STATUS_COMPLETED",
+        "RUN_STATUS_ERROR",
+        "RUN_STATUS_INTERRUPTED"
+      ],
+      "default": "RUN_STATUS_UNSPECIFIED",
+      "description": "RunStatus is the lifecycle state of a Run.\n\n - RUN_STATUS_UNSPECIFIED: Proto3 default. Conforming implementations should not return this.\n - RUN_STATUS_PENDING: The run record has been created but execution has not begun.\nImplementations transition runs from PENDING to RUNNING once the\nunderlying workload (for example a Kubernetes Job) has started.\n - RUN_STATUS_RUNNING: The run is executing. Events are being posted through the worker\ncallback surface and forwarded to streaming subscribers.\n - RUN_STATUS_COMPLETED: The run finished successfully. `session_id` and `usage` are\npopulated on the Run record.\n - RUN_STATUS_ERROR: The run finished unsuccessfully. `error` is populated with an\nimplementation-supplied message.\n - RUN_STATUS_INTERRUPTED: The run was cancelled before natural completion, either by an\nexplicit `InterruptRun` call or by an implementation-side\ntimeout / deadline. `error` MAY carry a reason."
+    },
+    "v1RunUsage": {
+      "type": "object",
+      "properties": {
+        "totalCostUsd": {
+          "type": "number",
+          "format": "double",
+          "description": "Total cost in USD, as reported by the SDK's result payload\n(pre-markup)."
+        },
+        "inputTokens": {
+          "type": "string",
+          "format": "int64",
+          "description": "Total input tokens billed across all turns in this run."
+        },
+        "outputTokens": {
+          "type": "string",
+          "format": "int64",
+          "description": "Total output tokens billed across all turns in this run."
+        },
+        "cacheReadTokens": {
+          "type": "string",
+          "format": "int64",
+          "description": "Cache-read tokens (prompt prefixes served from prompt cache)."
+        },
+        "cacheCreationTokens": {
+          "type": "string",
+          "format": "int64",
+          "description": "Cache-creation tokens (prompt prefixes written into prompt\ncache)."
+        }
+      },
+      "description": "RunUsage is the resource-usage summary captured at run completion\nfrom the agent SDK's terminal message."
+    },
+    "v1StreamEvent": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "string",
+          "format": "int64",
+          "description": "Monotonic index within the run, starting at 0. The (run_id,\nindex) pair is unique."
+        },
+        "type": {
+          "type": "string",
+          "description": "* `\"system.worker_started\"` — emitted by the worker at run\n    start.\n  * `\"user\"`, `\"assistant\"` — SDK message kinds.\n  * `\"result.\u003csubtype\u003e\"`, `\"system.\u003csubtype\u003e\"` — SDK\n    intermediate signals.\n  * `\"rate_limit_event\"` — SDK rate-limit notification.\n  * `\"artifact.created\"`, `\"artifact.updated\"`,\n    `\"artifact.app_deployed\"` — forwarded from the Artifacts\n    interface (see `artifacts.proto`, `ArtifactEventType`).\n\nConforming implementations SHOULD use these well-known strings\nwhen the payload matches their shape, and MAY introduce\nadditional string values. Subscribers MUST treat unknown `type`\nvalues as opaque and preserve them when replaying history.",
+          "title": "Discriminator describing the payload shape. Well-known values\ninclude:"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Wallclock time the event was produced."
+        },
+        "raw": {
+          "type": "object",
+          "description": "Opaque structured payload. Schema varies by `type`. Conforming\nimplementations MUST preserve the payload bit-for-bit through\nthe streaming and history-replay paths."
+        }
+      },
+      "description": "StreamEvent is a single message in a run's event stream. Events\ncarry arbitrary SDK output, worker-emitted lifecycle signals, and\nforwarded artifact events."
+    },
+    "v1StreamRunEventsResponse": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "$ref": "#/definitions/v1StreamEvent",
+          "description": "One event from the run. The stream completes (no error) once the\nrun reaches a terminal status and all buffered events have been\ndelivered."
+        }
+      },
+      "description": "StreamRunEventsResponse is a single message on the StreamRunEvents\nserver stream."
+    }
+  }
+}

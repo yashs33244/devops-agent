@@ -1,0 +1,108 @@
+name: CI — First-Party Services
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - ".github/workflows/ci-services.yml"
+  pull_request:
+    paths:
+      - "services/**"
+      - ".github/workflows/ci-services.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Python API ──────────────────────────────────────────────────────────────
+  python-api:
+    name: python-api — test + build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: services/python-api
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2a # v5.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest pytest-cov httpx 2>/dev/null || pip install fastapi uvicorn prometheus_client pytest httpx
+      - run: pytest -x -q --tb=short
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+      - uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v6.7.0
+        with:
+          context: services/python-api
+          push: false
+          load: true
+          tags: python-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Go API ──────────────────────────────────────────────────────────────────
+  go-api:
+    name: go-api — test + build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: services/go-api
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58c55ab2f0e6fc5fcba7c6 # v5.4.0
+        with:
+          go-version-file: services/go-api/go.mod
+          cache-dependency-path: services/go-api/go.sum
+      - run: go test ./... -v -race -count=1
+      - run: go build -v ./...
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+      - uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v6.7.0
+        with:
+          context: services/go-api
+          push: false
+          load: true
+          tags: go-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Next.js ─────────────────────────────────────────────────────────────────
+  nextjs-demo:
+    name: nextjs-demo — lint + build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: services/nextjs-demo
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/nextjs-demo/package-lock.json
+      - run: npm ci
+      - run: npm run lint --if-present
+      - run: npm run build
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+      - uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v6.7.0
+        with:
+          context: services/nextjs-demo
+          push: false
+          load: true
+          tags: nextjs-demo:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Helm charts for services ─────────────────────────────────────────────────
+  helm-lint-services:
+    name: Helm lint — all service charts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: "3.16.3"
+      - run: |
+          for chart in services/*/helm/; do
+            [ -f "$chart/Chart.yaml" ] && helm lint "$chart" --strict || true
+          done

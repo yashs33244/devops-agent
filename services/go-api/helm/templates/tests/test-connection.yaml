@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "chart.fullname" . }}-test-connection"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl-health
+      image: curlimages/curl:8.10.1
+      imagePullPolicy: IfNotPresent
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      command:
+        - sh
+        - -c
+        - |
+          set -e
+          SVC="{{ include "chart.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local"
+          PORT="{{ .Values.service.port }}"
+          URL="http://${SVC}:${PORT}/health"
+          echo "Testing: ${URL}"
+          curl \
+            --silent \
+            --fail \
+            --max-time 10 \
+            --retry 5 \
+            --retry-delay 2 \
+            --retry-connrefused \
+            "${URL}"
+          echo ""
+          echo "Health check passed."
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi

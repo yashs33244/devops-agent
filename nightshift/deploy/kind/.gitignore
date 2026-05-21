@@ -1,3 +1,0 @@
-# Generated HMAC files + service passwords for local kind dev. Never commit.
-.dev-*-hmac
-.dev-*-pass

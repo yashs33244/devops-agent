@@ -1,0 +1,50 @@
+{{- if .Values.tetragon.enabled }}
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: {{ include "nightshift.fullname" (dict "Release" .Release "component" "worker-file-audit") }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nightshift
+      app.kubernetes.io/component: worker
+  kprobes:
+    - call: "security_file_permission"
+      syscall: false
+      return: true
+      args:
+        - index: 0
+          type: "file"
+        - index: 1
+          type: "int"
+      returnArg:
+        index: 0
+        type: "int"
+      returnArgAction: "Post"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "Prefix"
+              values:
+                - "/etc/shadow"
+                - "/etc/passwd"
+                - "/root/.ssh"
+                - "/var/run/secrets/kubernetes.io/serviceaccount"
+            - index: 1
+              operator: "Equal"
+              values:
+                - "4"
+        - matchArgs:
+            - index: 0
+              operator: "Prefix"
+              values:
+                - "/etc"
+                - "/var/log"
+            - index: 1
+              operator: "Equal"
+              values:
+                - "2"
+{{- end }}

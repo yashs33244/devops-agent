@@ -1,0 +1,26 @@
+{{- if .Values.tetragon.enabled }}
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: {{ include "nightshift.fullname" (dict "Release" .Release "component" "worker-exec-audit") }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nightshift
+      app.kubernetes.io/component: worker
+  kprobes:
+    - call: "sys_execve"
+      syscall: true
+      args:
+        - index: 0
+          type: "string"
+        - index: 1
+          type: "char_buf"
+          sizeArgIndex: 2
+      selectors:
+        - matchActions:
+            - action: Post
+{{- end }}

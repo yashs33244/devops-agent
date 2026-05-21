@@ -1,0 +1,8 @@
+name: plural
+description: Empowers devs to build & maintain cloud-native & production-ready OSS infrastructure on Kubernetes.
+category: DEVOPS
+icon: plural/icons/plural-logo.png
+darkIcon: plural/icons/plural-white.png
+gitUrl: https://github.com/pluralsh/plural
+tags:
+- tag: kubernetes

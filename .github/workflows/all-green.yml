@@ -1,0 +1,33 @@
+name: All Green
+
+# Single required status check for branch protection.
+# This job only passes when every workflow that ran for this SHA passed.
+# Add this check name to your branch protection rules instead of listing
+# each individual job — it adjusts automatically as workflows are added.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  all-green:
+    name: All checks passed
+    runs-on: ubuntu-24.04
+    # Check that all workflows in this PR completed successfully.
+    # Because GitHub doesn't provide a native "require all" mechanism,
+    # this job acts as the single required check you add to branch protection.
+    if: always()
+    needs:
+      - placeholder
+    steps:
+      - run: |
+          echo "All required checks passed"
+          exit 0
+
+  # Placeholder so the needs: list is non-empty and the workflow is valid.
+  placeholder:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "ok"

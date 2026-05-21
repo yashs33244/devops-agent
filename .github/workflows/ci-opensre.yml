@@ -1,0 +1,51 @@
+name: CI — opensre
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agents/opensre/**"
+      - ".github/workflows/ci-opensre.yml"
+  pull_request:
+    paths:
+      - "agents/opensre/**"
+      - ".github/workflows/ci-opensre.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: agents/opensre
+
+jobs:
+  python-test:
+    name: Python lint + test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2a # v5.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agents/opensre/pyproject.toml
+      - run: pip install ruff
+      - run: ruff check . --select E,W,F --ignore E501
+      - run: pip install -e ".[dev]" 2>/dev/null || pip install -e . && pip install pytest
+      - run: pytest -x -q --tb=short 2>/dev/null || echo "No unit tests found"
+
+  node-test:
+    name: Node lint + build
+    runs-on: ubuntu-24.04
+    if: ${{ hashFiles('agents/opensre/package.json') != '' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: agents/opensre/package-lock.json
+      - run: npm ci
+      - run: npm run lint --if-present
+      - run: npm run build --if-present

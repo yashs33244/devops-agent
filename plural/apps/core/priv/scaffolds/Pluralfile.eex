@@ -1,6 +1,0 @@
-REPO <%= application %>
-ATTRIBUTES <%= Core.Services.Scaffolds.quote_if_necessary(publisher) %> repository.yaml
-
-TF terraform/*
-HELM helm/*
-RECIPE plural/recipes/*

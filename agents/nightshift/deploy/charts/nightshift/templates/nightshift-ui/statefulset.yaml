@@ -1,0 +1,172 @@
+{{- /* nightshift-ui as a StatefulSet — rendered only when no shared
+       Postgres is configured, since each pod's per-pod SQLite at
+       /data/auth.db is the better-auth store. For postgres mode,
+       see deployment.yaml. The Service for both modes lives in
+       service.yaml. */ -}}
+{{- if and .Values.ui.enabled (not .Values.postgres.enabled) }}
+{{- $name := include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-ui") }}
+{{- $apiSvc := include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-api") }}
+{{- $apiURL := printf "http://%s.%s.svc:8080" $apiSvc .Release.Namespace }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nightshift-ui
+spec:
+  serviceName: {{ $name }}
+  replicas: {{ .Values.ui.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nightshift.selectorLabels" (dict "Release" .Release "component" "nightshift-ui") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nightshift.labels" . | nindent 8 }}
+        app.kubernetes.io/component: nightshift-ui
+    spec:
+      serviceAccountName: {{ $name }}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      {{- if .Values.openbao.enabled }}
+      # Init container polls for the OIDC ui-client Secret to be
+      # populated by the openbao-oidc-bootstrap Job before letting
+      # the app start. Avoids CrashLoop churn during first-boot.
+      # Uses curl + the K8s API server directly — no kubectl needed.
+      initContainers:
+        - name: wait-oidc
+          image: curlimages/curl:8.8.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              API="https://kubernetes.default.svc"
+              TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              SEC="{{ include "nightshift.openbaoOidcUiClientSecret" . }}"
+              NS="{{ .Release.Namespace }}"
+              echo "[wait-oidc] polling for Secret $NS/$SEC ..."
+              i=0
+              while true; do
+                code=$(curl -sS -o /tmp/resp -w '%{http_code}' \
+                  --cacert "$CA" -H "Authorization: Bearer $TOKEN" \
+                  "$API/api/v1/namespaces/$NS/secrets/$SEC")
+                if [ "$code" = "200" ]; then
+                  if grep -q '"client_id"' /tmp/resp && ! grep -q '"client_id":""' /tmp/resp; then
+                    echo "[wait-oidc] secret populated"
+                    exit 0
+                  fi
+                fi
+                i=$((i+1)); if [ "$i" -gt 300 ]; then
+                  echo "[wait-oidc] timed out (last code=$code)"; exit 1
+                fi
+                sleep 2
+              done
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "128Mi" }
+      {{- end }}
+      containers:
+        - name: ui
+          image: {{ include "nightshift.uiImage" . }}
+          imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
+          # SQLite mode: each pod has its own DB at /data/auth.db,
+          # so each pod must run drizzle-kit migrate at startup. The
+          # image's default CMD is just `next start` (postgres mode
+          # uses the Helm migration Job for schema apply); we override
+          # here to chain migrate before serve.
+          command:
+            - sh
+            - -c
+            - drizzle-kit migrate && next start -p 3000 -H 0.0.0.0
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: DATABASE_URL
+              value: /data/auth.db
+            - name: BETTER_AUTH_URL
+              value: "{{ include "nightshift.uiPublicURL" . }}"
+            - name: BETTER_AUTH_TRUSTED_ORIGINS
+              # Always trust BETTER_AUTH_URL itself. Operators can
+              # append additional origins (dev port-forwards, alternate
+              # hostnames) via ui.trustedOrigins; the list joins
+              # comma-separated for better-auth's parser.
+              value: "{{ include "nightshift.uiPublicURL" . }}{{- with .Values.ui.trustedOrigins }},{{ join "," . }}{{- end }}"
+            - name: NIGHTSHIFT_API_URL
+              value: {{ $apiURL | quote }}
+            - name: TENANT_ID
+              value: {{ .Values.tenant.name | quote }}
+            - name: TENANT_NAME
+              value: {{ .Values.tenant.name | quote }}
+            {{- if .Values.ui.emailPasswordFallback }}
+            - name: AUTH_EMAIL_PASSWORD_ENABLED
+              value: "true"
+            {{- end }}
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}
+                  key: BETTER_AUTH_SECRET
+            {{- if .Values.openbao.enabled }}
+            # AUTHORIZATION_URL is browser-facing. The published OpenBao
+            # docker image (ghcr.io/openbao/openbao:2.2.0) is built
+            # without the `ui` Go tag, so /ui/* 404s and the IdP cannot
+            # render its own login form. We bridge that gap inside the
+            # Nightshift UI: better-auth redirects the browser here, the
+            # /login/openbao page renders a userpass form, and the
+            # form's Server Action calls OpenBao's API server-side
+            # (userpass login → /v1/...authorize with X-Vault-Token)
+            # before bouncing the browser to better-auth's OAuth
+            # callback. The token + userinfo URLs stay in-cluster
+            # because they're called from the UI's Node.js process.
+            - name: OIDC_AUTHORIZATION_URL
+              value: "{{ include "nightshift.uiPublicURL" . }}/login/openbao"
+            - name: OIDC_TOKEN_URL
+              value: "{{ include "nightshift.openbaoEndpoint" . }}/v1/identity/oidc/provider/nightshift/token"
+            - name: OIDC_USERINFO_URL
+              value: "{{ include "nightshift.openbaoEndpoint" . }}/v1/identity/oidc/provider/nightshift/userinfo"
+            - name: OPENBAO_INTERNAL_URL
+              value: "{{ include "nightshift.openbaoEndpoint" . }}"
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nightshift.openbaoOidcUiClientSecret" . }}
+                  key: client_id
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nightshift.openbaoOidcUiClientSecret" . }}
+                  key: client_secret
+            {{- end }}
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /login, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /login, port: 3000 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  {{- if .Values.ui.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          {{- toYaml .Values.ui.persistence.accessModes | nindent 10 }}
+        {{- if .Values.ui.persistence.storageClassName }}
+        storageClassName: {{ .Values.ui.persistence.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.ui.persistence.size }}
+  {{- end }}
+{{- end }}

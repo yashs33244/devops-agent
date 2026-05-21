@@ -1,0 +1,53 @@
+# argo-cd chart values for nightshift's reference install. Pinned to
+# argo-cd chart 7.7.5; bump deliberately + re-test.
+
+global:
+  domain: argocd.example.com
+
+# The repo-server pulls helm OCI charts from public.ecr.aws.
+# `helm.repositories` could declare these, but the cleanest path is
+# letting individual Applications declare their source `repoURL`.
+# We do need to give the repo-server's pod the credentials Secret
+# refreshed by ecr-token-refresh.yaml — see that file for the
+# `argocd-repo-server-ecr-public` Secret + envFrom wiring.
+repoServer:
+  envFrom:
+    - secretRef:
+        name: argocd-repo-server-ecr-public
+        optional: true
+
+  # Helm registries Argo CD authenticates to. The chart's standard
+  # secret format. `username`/`password` come from the env-from
+  # secret; the URL is fixed.
+  volumes:
+    - name: helm-config
+      emptyDir: {}
+  volumeMounts:
+    - name: helm-config
+      mountPath: /home/argocd/.config/helm
+
+# Server runs read-only ingress + the gRPC API; bring under a TLS
+# ingress in production. Defaults are fine for a bootstrap.
+server:
+  ingress:
+    enabled: false   # operators wire after install with tenant DNS
+  extraArgs:
+    - --insecure   # TLS terminates at ingress; chart self-cert is OK
+                   # when running behind kubectl port-forward.
+
+# ApplicationSet controller is what implements the App-of-Apps
+# pattern; default-on in this chart is fine.
+
+# Auto-sync defaults: the customers repo gets `automated:
+# {prune: true, selfHeal: true}` per-Application, not globally here.
+
+configs:
+  cm:
+    # Polling interval for OCI registries. Default is 3 min, which
+    # matches the chart-version-range "auto-pickup" cadence we want.
+    timeout.reconciliation: 180s
+
+  params:
+    # OCI helm-chart repos require this for repo-server to honor
+    # the credentials Secret.
+    server.insecure: true

@@ -1,0 +1,183 @@
+import { useQuery } from '@apollo/client'
+import { Box } from 'grommet'
+import { Button, Div, Flex, Span } from 'honorable'
+import moment from 'moment'
+import { useState } from 'react'
+import { AppIcon, ArrowLeftIcon } from '@pluralsh/design-system'
+
+import { Placeholder } from '../utils/Placeholder'
+import {
+  deepUpdate,
+  extendConnection,
+  removeConnection,
+  updateCache,
+} from '../../utils/graphql'
+import { DeleteIconButton } from '../utils/IconButtons'
+import { StandardScroller } from '../utils/SmoothScroller'
+import { Table, TableData, TableRow } from '../utils/Table'
+import { ProviderIcon } from '../utils/ProviderIcon'
+import { Confirm } from '../utils/Confirm'
+
+import { useDeleteDnsRecordMutation } from '../../generated/graphql'
+
+import { DNS_RECORDS } from './queries'
+
+function DeleteRecord({ record, domain }: any) {
+  const [confirm, setConfirm] = useState(false)
+  const [mutation, { loading, error }] = useDeleteDnsRecordMutation({
+    variables: { name: record.name, type: record.type },
+    update: (cache, { data }) =>
+      updateCache(cache, {
+        query: DNS_RECORDS,
+        variables: { id: domain.id },
+        update: (prev) =>
+          deepUpdate(prev, 'dnsDomain', (domain) =>
+            removeConnection(domain, data?.deleteDnsRecord, 'dnsRecords')
+          ),
+      }),
+    onCompleted: () => setConfirm(false),
+  })
+
+  return (
+    <>
+      <DeleteIconButton
+        onClick={() => setConfirm(true)}
+        marginLeft="small"
+      />
+      <Confirm
+        open={confirm}
+        error={error}
+        title={`Delete ${record.name}?`}
+        text={`This will delete the ${record.type} record for ${record.name} permanently`}
+        submit={() => mutation()}
+        close={() => setConfirm(false)}
+        label="Delete"
+        loading={loading}
+      />
+    </>
+  )
+}
+
+export function DnsRecords({ domain, setDomain }: any) {
+  const [listRef, setListRef] = useState<any>(null)
+  const { data, loading, fetchMore } = useQuery(DNS_RECORDS, {
+    variables: { id: domain.id },
+    fetchPolicy: 'cache-and-network',
+  })
+
+  if (!data) {
+    return null
+  }
+
+  const {
+    dnsRecords: { pageInfo, edges },
+  } = data.dnsDomain
+
+  return (
+    <Box fill>
+      <Flex margin="xxxsmall">
+        <Button
+          tertiary
+          textDecoration="none"
+          onClick={(e) => {
+            e.preventDefault()
+            setDomain(null)
+          }}
+          startIcon={<ArrowLeftIcon />}
+        >
+          Back
+        </Button>
+      </Flex>
+      <Table
+        heading={domain.name}
+        headers={['Name', 'Type', 'Cluster', 'Created', 'Creator']}
+        sizes={['40%', '80px', '20%', '120px', '20%']}
+        background="fill-one"
+        border="1px solid border"
+        width="100%"
+        height="100%"
+      >
+        <Box fill>
+          <StandardScroller
+            listRef={listRef}
+            setListRef={setListRef}
+            hasNextPage={pageInfo.hasNextPage}
+            items={edges}
+            loading={loading}
+            placeholder={Placeholder}
+            mapper={({ node }, { next }) => (
+              <TableRow
+                key={node.id}
+                last={!next.node}
+                suffix={
+                  <DeleteRecord
+                    record={node}
+                    domain={domain}
+                  />
+                }
+              >
+                <TableData>{node.name}</TableData>
+                <TableData>{node.type}</TableData>
+                <TableData>
+                  <Box
+                    flex={false}
+                    direction="row"
+                    gap="xsmall"
+                    align="center"
+                  >
+                    <ProviderIcon
+                      provider={node.provider}
+                      width={30}
+                    />
+                    <Span color="text-light">{node.cluster}</Span>
+                  </Box>
+                </TableData>
+                <TableData>
+                  <Flex direction="column">
+                    <Div
+                      body2
+                      color="text-light"
+                    >
+                      {moment(node.insertedAt).format('ll')}
+                    </Div>
+                    <Div
+                      caption
+                      color="text-xlight"
+                    >
+                      {moment(node.insertedAt).format('LT')}
+                    </Div>
+                  </Flex>
+                </TableData>
+                <TableData>
+                  <Box
+                    direction="row"
+                    gap="xsmall"
+                    align="center"
+                  >
+                    <AppIcon
+                      url={node?.creator?.avatar || undefined}
+                      name={node.creator?.name || undefined}
+                      size="xxsmall"
+                      spacing={node?.creator?.avatar ? 'none' : undefined}
+                    />
+                    <Span color="text-light">{node.creator?.name}</Span>
+                  </Box>
+                </TableData>
+              </TableRow>
+            )}
+            loadNextPage={() =>
+              pageInfo.hasNextPage &&
+              fetchMore({
+                variables: { cursor: pageInfo.endCursor },
+                updateQuery: (prev, { fetchMoreResult: { dnsDomain } }) =>
+                  deepUpdate(prev, 'dnsDomain', (prev) =>
+                    extendConnection(prev, dnsDomain.dnsRecords, 'dnsRecords')
+                  ),
+              })
+            }
+          />
+        </Box>
+      </Table>
+    </Box>
+  )
+}

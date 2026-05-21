@@ -1,0 +1,111 @@
+# ECR Public auth-token refresher.
+#
+# ECR Public's helm OCI registry requires a bearer token issued by
+# `aws ecr-public get-authorization-token`. The token expires every
+# 12 hours. Argo CD's repo-server caches the credentials at startup
+# from the `argocd-repo-server-ecr-public` Secret + does not
+# auto-refresh — so a CronJob rotates the Secret every 6h and bumps
+# the repo-server's pods so the new token is read.
+#
+# IRSA setup (operator-managed, out of band):
+#   IAM role:   arn:aws:iam::<account>:role/argocd-ecr-public-token
+#   Trust:      this ServiceAccount via the cluster's OIDC provider
+#   Policy:     ecr-public:GetAuthorizationToken
+#               sts:GetServiceBearerToken
+# Annotate the SA below with the role ARN before applying.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argocd-ecr-public-token
+  namespace: argocd
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::REPLACE-ME:role/argocd-ecr-public-token
+
+---
+# RBAC: the Job needs to write the Secret + bounce the repo-server.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-ecr-public-token
+  namespace: argocd
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "deployments"]
+    verbs: ["get", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-ecr-public-token
+  namespace: argocd
+subjects:
+  - kind: ServiceAccount
+    name: argocd-ecr-public-token
+    namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-ecr-public-token
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: argocd-ecr-public-token
+  namespace: argocd
+spec:
+  # Every 6h. Token is good for 12h; the 2x margin tolerates a
+  # missed run without an outage.
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: argocd-ecr-public-token
+          containers:
+            - name: refresh
+              # alpine/k8s ships kubectl + aws CLI in one image, which
+              # the script needs (mint token via aws, write Secret +
+              # rollout-restart via kubectl). Pinned for reproducibility.
+              image: alpine/k8s:1.31.0
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  TOKEN=$(aws ecr-public get-login-password --region us-east-1)
+                  kubectl create secret generic argocd-repo-server-ecr-public \
+                    --namespace argocd \
+                    --from-literal=HELM_REGISTRY_USERNAME=AWS \
+                    --from-literal=HELM_REGISTRY_PASSWORD="$TOKEN" \
+                    --dry-run=client -o yaml \
+                    | kubectl apply -f -
+                  # Bump the repo-server so the new env-from is loaded.
+                  kubectl rollout restart -n argocd statefulset argocd-application-controller || true
+                  kubectl rollout restart -n argocd deployment argocd-repo-server || true
+              env:
+                - name: AWS_REGION
+                  value: us-east-1
+
+---
+# Initial Secret stub so the repo-server can mount it on first
+# deploy. The CronJob overwrites it within 6h. Not a credential
+# valid for ECR Public; just placeholder fields.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-repo-server-ecr-public
+  namespace: argocd
+type: Opaque
+stringData:
+  HELM_REGISTRY_USERNAME: AWS
+  HELM_REGISTRY_PASSWORD: bootstrap-placeholder-rotated-by-cronjob

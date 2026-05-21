@@ -1,0 +1,191 @@
+# Default values for python-api.
+# Override per-environment via values-dev.yaml, values-staging.yaml, values-prod.yaml
+
+# -- Container image configuration
+image:
+  repository: "REGISTRY_PLACEHOLDER/python-api"
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# -- Number of pod replicas (ignored when autoscaling.enabled or keda.enabled)
+replicaCount: 1
+
+# -- Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+  annotations: {}
+
+# -- Ingress configuration
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  hosts:
+    - host: "python-api.example.com"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: "python-api-tls"
+      hosts:
+        - "python-api.example.com"
+
+# -- Resource requests and limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# -- Horizontal Pod Autoscaler
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# -- Annotations applied to every Pod
+podAnnotations: {}
+
+# -- Pod-level security context (applies to all containers in the pod)
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Liveness probe (pod is restarted if this fails)
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  failureThreshold: 3
+  timeoutSeconds: 5
+
+# -- Readiness probe (pod removed from service endpoints if this fails)
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 5
+
+# -- Startup probe (gives slow-starting containers more time)
+startupProbe:
+  httpGet:
+    path: /health
+    port: http
+  failureThreshold: 30
+  periodSeconds: 10
+
+# -- Plain environment variables (list of name/value pairs)
+env: []
+# - name: LOG_LEVEL
+#   value: info
+
+# -- Environment variables sourced from ConfigMaps or Secrets
+envFrom: []
+# - configMapRef:
+#     name: my-config
+# - secretRef:
+#     name: my-secret
+
+# -- Secret keys managed by secrets_manager.py
+# Each key maps to a description; actual values are injected at deploy time.
+secrets: {}
+# DATABASE_URL: "PostgreSQL connection string"
+# API_KEY: "Third-party API key"
+
+# -- ExternalSecrets Operator integration
+externalSecrets:
+  enabled: false
+  secretStoreName: "cluster-secret-store"
+  secretStoreKind: "ClusterSecretStore"
+  # Refresh interval for secret sync
+  refreshInterval: "1h"
+  # Cloud-specific path prefix (set by helm_gen.py based on --cloud)
+  cloudBackend: "aws"
+  secretPathPrefix: ""
+
+# -- ServiceAccount
+serviceAccount:
+  create: true
+  # If empty, a name is generated using the fullname template
+  name: ""
+  annotations:
+  eks.amazonaws.com/role-arn: "SET_BY_TERRAFORM"
+  # Example IRSA (AWS):
+  # eks.amazonaws.com/role-arn: arn:aws:iam::123456789:role/my-role
+  # Example Workload Identity (Azure):
+  # azure.workload.identity/client-id: "00000000-0000-0000-0000-000000000000"
+  # Example Workload Identity (GCP):
+  # iam.gke.io/gcp-service-account: sa@project.iam.gserviceaccount.com
+
+# -- KEDA HTTP scaling (scale to 0 when idle)
+keda:
+  enabled: false
+  minReplicas: 0
+  maxReplicas: 10
+  http:
+    enabled: true
+    targetPendingRequests: 100
+    scaledownPeriod: 300
+
+# -- Node selector
+nodeSelector: {}
+
+# -- Tolerations
+tolerations: []
+
+# -- Affinity rules (prefer spreading across zones)
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: "python-api"
+          topologyKey: topology.kubernetes.io/zone
+
+# -- Extra volumes (e.g. emptyDir for tmp when readOnlyRootFilesystem is true)
+extraVolumes:
+  - name: tmp
+    emptyDir: {}
+
+# -- Extra volume mounts
+extraVolumeMounts:
+  - name: tmp
+    mountPath: /tmp
+
+# -- Prometheus + Grafana monitoring
+monitoring:
+  enabled: true
+  metricsPath: /metrics
+  scrapeInterval: 30s
+  scrapeTimeout: 10s
+  alerts:
+    enabled: true
+  grafana:
+    dashboard: true

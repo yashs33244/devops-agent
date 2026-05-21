@@ -82,9 +82,18 @@ credentials.json
 service-account*.json
 *-sa-key.json
 
-# ─── Workspace (cloned repos, generated output) ───────────────────────────────
+# ─── Workspace (cloned repos — gitignored, use services/ for first-party code) ─
 workspace/*/
 !workspace/.gitkeep
+
+# ─── Services sub-dirs that should NOT be committed ──────────────────────────
+# services/ is tracked — only exclude generated build artefacts inside it
+services/*/.next/
+services/*/out/
+services/*/dist/
+services/*/node_modules/
+services/*/__pycache__/
+services/*/.pytest_cache/
 
 # ─── Testing artefacts ────────────────────────────────────────────────────────
 .coverage

@@ -1,0 +1,96 @@
+{{- /*
+  Post-install Job that initializes OpenBao if it isn't already, capturing
+  the unseal key + root token into the openbao-seed K8s Secret. Idempotent:
+  if /v1/sys/seal-status reports initialized, exit 0.
+
+  Skipped when autoUnseal is enabled (KMS / external auto-unseal handles
+  this upstream).
+*/}}
+{{- if and .Values.openbao.enabled (not .Values.openbao.autoUnseal.enabled) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openbao-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: openbao-init
+  annotations:
+    # helm install path: weight -5 puts this AFTER the regular release
+    # apply (StatefulSet, Service, openbao SA) but BEFORE the OIDC
+    # bootstrap Job (weight 0).
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    # Argo CD path: Sync hook with wave 10. Runs after wave 5
+    # (openbao-reviewer-token Secret) and before wave 15
+    # (openbao-oidc-bootstrap Job). See sa-token-secret.yaml for
+    # rationale on why we override the helm-hook → PostSync
+    # translation.
+    "argocd.argoproj.io/hook": Sync
+    "argocd.argoproj.io/sync-wave": "10"
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "nightshift.labels" . | nindent 8 }}
+        app.kubernetes.io/component: openbao-init
+    spec:
+      serviceAccountName: openbao-bootstrap
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: alpine:3.19
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              apk add --no-cache curl ca-certificates >/dev/null
+              curl -sSLo /usr/local/bin/kubectl \
+                "https://dl.k8s.io/release/$(curl -sSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x /usr/local/bin/kubectl
+
+              BAO="{{ include "nightshift.openbaoEndpoint" . }}"
+              echo "[init] waiting for openbao to come up..."
+              i=0
+              until curl -sS "$BAO/v1/sys/seal-status" >/dev/null 2>&1; do
+                i=$((i+1))
+                if [ "$i" -gt 120 ]; then echo "[init] timed out waiting for openbao"; exit 1; fi
+                sleep 2
+              done
+
+              STATE=$(curl -sS "$BAO/v1/sys/seal-status")
+              if echo "$STATE" | grep -q '"initialized":true'; then
+                echo "[init] openbao already initialized — nothing to do"
+                exit 0
+              fi
+
+              echo "[init] initializing openbao..."
+              RESP=$(curl -sS -X PUT -H 'Content-Type: application/json' \
+                --data '{"secret_shares":1,"secret_threshold":1}' \
+                "$BAO/v1/sys/init")
+              # Anchor the sed extraction to "keys":["..."] — a generic
+              # `grep -oE '"[^"]*"' | head -1` would grab the literal
+              # string "keys" as the first match.
+              UNSEAL=$(printf '%s' "$RESP" | sed -n 's/.*"keys":\["\([^"]*\)".*/\1/p')
+              ROOT=$(printf '%s' "$RESP" | sed -n 's/.*"root_token":"\([^"]*\)".*/\1/p')
+              if [ -z "$UNSEAL" ] || [ -z "$ROOT" ]; then
+                echo "[init] FATAL: init response missing keys"; echo "$RESP" >&2; exit 1
+              fi
+
+              echo "[init] writing seed secret"
+              kubectl -n "{{ .Release.Namespace }}" create secret generic "{{ include "nightshift.openbaoSeedSecret" . }}" \
+                --from-literal=unseal-key="$UNSEAL" \
+                --from-literal=root-token="$ROOT" \
+                --dry-run=client -o yaml | kubectl apply -f -
+
+              echo "[init] unsealing once so the bootstrap can run"
+              curl -sS -X PUT -H 'Content-Type: application/json' \
+                --data "{\"key\":\"$UNSEAL\"}" "$BAO/v1/sys/unseal" >/dev/null
+              echo "[init] done"
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
+{{- end }}

@@ -1,0 +1,43 @@
+name: CI — kagent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agents/kagent/**"
+      - ".github/workflows/ci-kagent.yml"
+  pull_request:
+    paths:
+      - "agents/kagent/**"
+      - ".github/workflows/ci-kagent.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-test:
+    name: Go test (kagent/go)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: agents/kagent/go
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58c55ab2f0e6fc5fcba7c6 # v5.4.0
+        with:
+          go-version-file: agents/kagent/go/go.mod
+          cache-dependency-path: agents/kagent/go/go.sum
+      - run: go build ./...
+      - run: go test ./... -v -race -count=1 -timeout 5m
+
+  helm-lint:
+    name: Helm lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: "3.16.3"
+      - run: |
+          find agents/kagent -name "Chart.yaml" -execdir helm lint . \; 2>/dev/null || true

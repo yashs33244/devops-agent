@@ -1,0 +1,254 @@
+// Nightshift Auth interface — vendor-neutral authentication plane.
+//
+// Auth is the multi-method authentication plane: each RPC group
+// implements one auth method (OAuth 2.0 today; SAML, LDAP, custom
+// token exchange, and other IdP flows may be added in future
+// iterations). It is split out from `Secrets` (the KV +
+// workload-auth plane) because operators may legitimately pick
+// different backends for the two concerns — for example, HashiCorp
+// Vault for encrypted KV alongside OpenBao's oauthapp plugin (or any
+// future provider) for per-user OAuth credential storage and
+// refresh.
+//
+// Today's surface:
+//
+//   * OAuth token dispenser. The per-user storage, refresh, and
+//     dispense of OAuth 2.0 access tokens for MCP connectors. The
+//     dispenser handles the authorization-code flow end-to-end and
+//     exposes `GetOAuthToken(provider, user_id)` as the read-side
+//     RPC the Config Dispenser calls at run start.
+//
+// Future auth methods will land here as additional RPC groups
+// (each in its own section, with method-specific request/response
+// messages and a verb prefix that names the method — e.g.
+// `RegisterSAMLProvider`, `BeginLDAPBind`). New methods MUST NOT
+// reuse OAuth-tagged messages or reuse the `OAuthToken` entity.
+//
+// Inbound bearer-token verification (the surface that authenticates
+// HTTP/gRPC requests *into* nightshift-api) is NOT part of this
+// proto; that lives entirely in `internal/auth/` (OIDCVerifier,
+// StaticVerifier, WorkerVerifier) and is a reference-implementation
+// concern, not a vendor-neutral contract.
+syntax = "proto3";
+
+package nightshift.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/nightshiftco/nightshift/gen/go/nightshift/v1;nightshiftv1";
+
+// =============================================================================
+// OAuth dispenser
+// =============================================================================
+//
+// Per-user OAuth 2.0 credential management for MCP connectors.
+
+// -----------------------------------------------------------------------------
+// OAuth dispenser entities
+// -----------------------------------------------------------------------------
+
+// OAuthToken is a per-user OAuth 2.0 access token materialized by the
+// OAuth dispenser. The dispenser auto-refreshes the underlying grant
+// as needed; callers see a fresh `access_token` on every read.
+message OAuthToken {
+  // The access token the caller sends to the upstream MCP server as
+  // `Authorization: Bearer <access_token>`.
+  string access_token = 1;
+
+  // OAuth token type — typically `"Bearer"`.
+  string token_type = 2;
+
+  // When `access_token` becomes invalid if not refreshed. The
+  // dispenser SHOULD refresh before this time on the next
+  // GetOAuthToken call; callers should treat it as informational.
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// -----------------------------------------------------------------------------
+// OAuth dispenser RPC messages
+// -----------------------------------------------------------------------------
+
+// RegisterOAuthProviderRequest is the request message for
+// RegisterOAuthProvider. Admin-only. Registers an OAuth application
+// with the backend so users may subsequently authorize it.
+//
+// The `provider_type` is a backend-interpreted string identifying
+// the upstream OAuth provider — for example `"github"`, `"linear"`,
+// `"atlassian"`, `"google"`. The implementation's OAuth plugin
+// resolves authorize / token / refresh URLs from this string.
+message RegisterOAuthProviderRequest {
+  // Display name of the provider registration. Used by subsequent
+  // dispenser RPCs to identify which provider to act on. Unique
+  // within the backend.
+  string name = 1;
+
+  // Upstream provider identifier (for example `"github"`).
+  string provider_type = 2;
+
+  // OAuth client ID issued by the upstream provider.
+  string client_id = 3;
+
+  // OAuth client secret issued by the upstream provider. Stored
+  // encrypted in the backend; never returned.
+  string client_secret = 4;
+}
+
+// RegisterOAuthProviderResponse is the response message for
+// RegisterOAuthProvider. It is intentionally empty — the registration
+// is identified on subsequent calls by `name`.
+message RegisterOAuthProviderResponse {}
+
+// GetOAuthAuthorizeURLRequest is the request message for
+// GetOAuthAuthorizeURL. Returns the URL the caller should redirect
+// the user's browser to in order to start the authorization-code
+// flow.
+message GetOAuthAuthorizeURLRequest {
+  // Name of a previously registered OAuth provider.
+  string provider_name = 1;
+
+  // User initiating the flow.
+  string user_id = 2;
+
+  // URL the provider will redirect back to after authorization.
+  string redirect_url = 3;
+
+  // Scopes to request from the provider. Empty means use the
+  // backend's default scopes for this provider type.
+  repeated string scopes = 4;
+}
+
+// GetOAuthAuthorizeURLResponse is the response message for
+// GetOAuthAuthorizeURL.
+message GetOAuthAuthorizeURLResponse {
+  // URL the caller should redirect the user's browser to.
+  string authorize_url = 1;
+
+  // Opaque state token the caller MUST pass back to
+  // ExchangeOAuthCode to prove the callback corresponds to this
+  // flow. Implementations typically encode user_id and a nonce.
+  string state = 2;
+}
+
+// ExchangeOAuthCodeRequest is the request message for
+// ExchangeOAuthCode. Exchanges the authorization code returned by
+// the provider for access + refresh tokens; stores them in the
+// backend under the per-user OAuth credential convention.
+message ExchangeOAuthCodeRequest {
+  // Name of the registered OAuth provider.
+  string provider_name = 1;
+
+  // User whose flow this completes. Implementations verify this
+  // matches the user encoded in `state`.
+  string user_id = 2;
+
+  // Authorization code from the provider's callback.
+  string code = 3;
+
+  // State token returned by GetOAuthAuthorizeURL. Must match to
+  // prevent CSRF.
+  string state = 4;
+
+  // The same redirect URL passed to GetOAuthAuthorizeURL.
+  string redirect_url = 5;
+}
+
+// ExchangeOAuthCodeResponse is the response message for
+// ExchangeOAuthCode. It is intentionally empty — the per-user
+// credential is now stored in the backend and is reachable via
+// GetOAuthToken.
+message ExchangeOAuthCodeResponse {}
+
+// GetOAuthTokenRequest is the request message for GetOAuthToken.
+// This is the dispenser read-side: the Config Dispenser calls it at
+// run start to materialize the user's per-connector MCP headers.
+message GetOAuthTokenRequest {
+  // Name of the registered OAuth provider.
+  string provider_name = 1;
+
+  // User whose token to dispense.
+  string user_id = 2;
+}
+
+// GetOAuthTokenResponse is the response message for GetOAuthToken.
+// The backend MUST transparently refresh the underlying grant before
+// returning so the returned `access_token` is usable for the
+// provider's full access-token TTL window.
+message GetOAuthTokenResponse {
+  // Fresh per-user OAuth token.
+  OAuthToken token = 1;
+}
+
+// DeleteOAuthCredentialRequest is the request message for
+// DeleteOAuthCredential. Deletes the stored per-user grant. The
+// OAuth provider itself is NOT revoked upstream; users must revoke
+// through the provider's UI to fully disconnect.
+message DeleteOAuthCredentialRequest {
+  // Name of the registered OAuth provider.
+  string provider_name = 1;
+
+  // User whose credential to delete.
+  string user_id = 2;
+}
+
+// DeleteOAuthCredentialResponse is the response message for
+// DeleteOAuthCredential. It is intentionally empty.
+message DeleteOAuthCredentialResponse {}
+
+// =============================================================================
+// Service
+// =============================================================================
+
+// Auth is the vendor-neutral authentication plane of Nightshift.
+// Today it exposes one auth method — the OAuth 2.0 dispenser for
+// per-user MCP connector credentials. Future iterations may add
+// additional methods (SAML, LDAP, custom token exchange) as new RPC
+// groups within this same service.
+service Auth {
+  // -------------------- OAuth dispenser --------------------
+
+  // RegisterOAuthProvider registers an OAuth application with the
+  // backend. Admin-only.
+  rpc RegisterOAuthProvider(RegisterOAuthProviderRequest) returns (RegisterOAuthProviderResponse) {
+    option (google.api.http) = {
+      post: "/v1/oauth/providers"
+      body: "*"
+    };
+  }
+
+  // GetOAuthAuthorizeURL returns the URL to redirect the user to in
+  // order to start the authorization-code flow.
+  rpc GetOAuthAuthorizeURL(GetOAuthAuthorizeURLRequest) returns (GetOAuthAuthorizeURLResponse) {
+    option (google.api.http) = {
+      post: "/v1/oauth/providers/{provider_name}:authorizeUrl"
+      body: "*"
+    };
+  }
+
+  // ExchangeOAuthCode exchanges an authorization code for tokens
+  // and stores them under the per-user convention. Called by the
+  // OAuth callback handler.
+  rpc ExchangeOAuthCode(ExchangeOAuthCodeRequest) returns (ExchangeOAuthCodeResponse) {
+    option (google.api.http) = {
+      post: "/v1/oauth/providers/{provider_name}:exchange"
+      body: "*"
+    };
+  }
+
+  // GetOAuthToken dispenses a fresh access token for (provider,
+  // user). The backend refreshes the underlying grant as needed;
+  // callers never touch the refresh token directly.
+  rpc GetOAuthToken(GetOAuthTokenRequest) returns (GetOAuthTokenResponse) {
+    option (google.api.http) = {
+      get: "/v1/oauth/providers/{provider_name}/users/{user_id}/token"
+    };
+  }
+
+  // DeleteOAuthCredential removes a per-user OAuth grant from the
+  // backend. Does not revoke the grant upstream at the provider.
+  rpc DeleteOAuthCredential(DeleteOAuthCredentialRequest) returns (DeleteOAuthCredentialResponse) {
+    option (google.api.http) = {
+      delete: "/v1/oauth/providers/{provider_name}/users/{user_id}"
+    };
+  }
+}

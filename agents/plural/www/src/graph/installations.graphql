@@ -1,0 +1,33 @@
+fragment InstallationRepo on Repository {
+  id
+  name
+  icon
+  darkIcon
+  private
+  trending
+  verified
+  category
+}
+
+fragment Installation on Installation {
+  id
+  context
+  license
+  licenseKey
+  acmeKeyId
+  acmeSecret
+  autoUpgrade
+  trackTag
+  pingedAt
+  synced
+  locked
+  repository {
+    ...InstallationRepo
+  }
+  user {
+    ...User
+  }
+  oidcProvider {
+    ...OIDCProvider
+  }
+}

@@ -1,0 +1,39 @@
+{{- if and .Values.ui.enabled .Values.openbao.enabled }}
+{{- $name := include "nightshift.fullname" (dict "Release" .Release "component" "nightshift-ui") }}
+# The UI's wait-oidc init container polls the K8s API for the
+# bootstrap-populated OIDC client Secret before the main container
+# starts. Grant the UI SA `get` on that one secret. The main container
+# itself reads the same secret via valueFrom.secretKeyRef which uses
+# the kubelet's read path + doesn't need API permission.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-wait-oidc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nightshift-ui
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames:
+      - {{ include "nightshift.openbaoOidcUiClientSecret" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-wait-oidc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nightshift.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nightshift-ui
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-wait-oidc
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

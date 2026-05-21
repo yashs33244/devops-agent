@@ -1,0 +1,40 @@
+{{- if and .Values.keda.enabled .Values.keda.http.enabled -}}
+# HTTPScaledObject — managed by keda-add-ons-http (HTTP Add-On for KEDA)
+# Scales the Deployment to 0 replicas when idle and back up in <60 s on first request.
+# Requires: https://github.com/kedacore/http-add-on installed in the cluster.
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: {{ include "chart.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+spec:
+  # The host header that KEDA's HTTP proxy will route to this object.
+  # Should match your Ingress host when ingress.enabled is true.
+  hosts:
+    {{- if .Values.ingress.enabled }}
+    {{- range .Values.ingress.hosts }}
+    - {{ .host | quote }}
+    {{- end }}
+    {{- else }}
+    - {{ include "chart.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+    {{- end }}
+  pathPrefixes:
+    - /
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "chart.fullname" . }}
+    service: {{ include "chart.fullname" . }}
+    port: {{ .Values.service.port }}
+  replicas:
+    min: {{ .Values.keda.minReplicas }}   # 0 = scale-to-zero when idle
+    max: {{ .Values.keda.maxReplicas }}
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: {{ .Values.keda.http.targetPendingRequests | default 100 }}
+      window: 1m
+  scaledownPeriod: {{ .Values.keda.http.scaledownPeriod | default 300 }}
+{{- end }}

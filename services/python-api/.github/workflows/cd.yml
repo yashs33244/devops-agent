@@ -1,0 +1,207 @@
+---
+# CD pipeline — Terraform infra provisioning + Helm deploy to Kubernetes
+# Template variables: {{REGISTRY}}, {{IMAGE_NAME}}, AWS, python-api, {{NAMESPACE}}
+name: CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        required: true
+        default: staging
+        options:
+          - dev
+          - staging
+          - prod
+      dry_run:
+        description: "Dry-run (plan only, no apply)"
+        type: boolean
+        required: false
+        default: false
+
+# Serialize deploys per environment — do not cancel in-progress production deploys
+concurrency:
+  group: cd-${{ inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+env:
+  ENVIRONMENT: ${{ inputs.environment || 'staging' }}
+
+jobs:
+  # ── Terraform Plan ──────────────────────────────────────────────────────────
+  terraform-plan:
+    name: Terraform Plan
+    uses: ./.github/workflows/_reusable-terraform.yml
+
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+    with:
+      cloud: "AWS"
+      environment: ${{ inputs.environment || 'staging' }}
+      working_directory: terraform
+      apply: false
+
+    secrets: inherit
+
+  # ── Terraform Apply ─────────────────────────────────────────────────────────
+  terraform-apply:
+    name: Terraform Apply
+    needs: terraform-plan
+    if: |
+      (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') &&
+      inputs.dry_run != true
+    uses: ./.github/workflows/_reusable-terraform.yml
+
+    permissions:
+      contents: read
+      id-token: write
+
+    with:
+      cloud: "AWS"
+      environment: ${{ inputs.environment || 'staging' }}
+      working_directory: terraform
+      apply: true
+
+    secrets: inherit
+
+  # ── Deploy to Kubernetes ────────────────────────────────────────────────────
+  deploy-k8s:
+    name: Deploy to Kubernetes (${{ inputs.environment || 'staging' }})
+    runs-on: ubuntu-24.04
+    needs: terraform-apply
+
+    # GitHub Environment provides the manual approval gate for staging + prod
+    environment:
+      name: ${{ inputs.environment || 'staging' }}
+      url: https://python-api.${{ inputs.environment || 'staging' }}.example.com
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      # ── Cloud-specific kubeconfig ─────────────────────────────────────────────
+
+      - name: Authenticate to AWS and update kubeconfig (EKS)
+        if: "AWS" == "aws"
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6542b4f84535c441e3d96597d  # v4.0.2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Get EKS credentials
+        if: "AWS" == "aws"
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ vars.EKS_CLUSTER_NAME }}" \
+            --region "${{ vars.AWS_REGION || 'us-east-1' }}"
+
+      - name: Authenticate to Azure
+        if: "AWS" == "azure"
+        uses: azure/login@a65d910e8af852a8061c627c456678983e180302  # v2.2.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        if: "AWS" == "azure"
+        run: |
+          az aks get-credentials \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AKS_CLUSTER_NAME }}" \
+            --overwrite-existing
+
+      - name: Authenticate to GCP
+        if: "AWS" == "gcp"
+        uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f  # v2.1.7
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        if: "AWS" == "gcp"
+        uses: google-github-actions/get-gke-credentials@6051de21ad50fbb1767bc93c11357a49082ad116  # v2.2.1
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GCP_REGION || 'us-central1' }}
+
+      # ── Helm deploy ───────────────────────────────────────────────────────────
+
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814  # v4.2.0
+        with:
+          version: "v3.16.3"
+
+      - name: Helm upgrade --install
+        run: |
+          helm upgrade --install \
+            "python-api" \
+            ./helm/python-api \
+            --namespace "{{NAMESPACE}}" \
+            --create-namespace \
+            --set image.repository="{{REGISTRY}}/{{IMAGE_NAME}}" \
+            --set image.tag="${{ github.sha }}" \
+            --set environment="${{ env.ENVIRONMENT }}" \
+            --values "./helm/python-api/values-${{ env.ENVIRONMENT }}.yaml" \
+            --timeout 5m \
+            --wait \
+            --atomic
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status \
+            deployment/python-api \
+            --namespace "{{NAMESPACE}}" \
+            --timeout=5m
+
+      - name: Run Helm tests
+        run: |
+          helm test "python-api" \
+            --namespace "{{NAMESPACE}}" \
+            --timeout 2m
+
+  # ── Failure Notification ────────────────────────────────────────────────────
+  notify:
+    name: Notify on Failure
+    runs-on: ubuntu-24.04
+    needs: [terraform-plan, terraform-apply, deploy-k8s]
+    if: failure()
+
+    permissions:
+      contents: none
+
+    steps:
+      - name: Post failure notification to Slack
+        uses: slackapi/slack-github-action@37ebaef184d7626c5f204ab8d3baff4262dd30f0  # v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":red_circle: *CD pipeline failed*",
+              "attachments": [
+                {
+                  "color": "danger",
+                  "fields": [
+                    { "title": "Repository", "value": "${{ github.repository }}", "short": true },
+                    { "title": "Branch",     "value": "${{ github.ref_name }}",  "short": true },
+                    { "title": "Environment","value": "${{ env.ENVIRONMENT }}",   "short": true },
+                    { "title": "Run",        "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>", "short": true },
+                    { "title": "Triggered by","value": "${{ github.actor }}",     "short": true },
+                    { "title": "Commit",     "value": "${{ github.sha }}",        "short": true }
+                  ]
+                }
+              ]
+            }

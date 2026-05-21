@@ -1,0 +1,34 @@
+name: CI — nightshift
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agents/nightshift/**"
+      - ".github/workflows/ci-nightshift.yml"
+  pull_request:
+    paths:
+      - "agents/nightshift/**"
+      - ".github/workflows/ci-nightshift.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: agents/nightshift
+
+jobs:
+  go-test:
+    name: Go build + test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58c55ab2f0e6fc5fcba7c6 # v5.4.0
+        with:
+          go-version-file: agents/nightshift/go.mod
+          cache-dependency-path: agents/nightshift/go.sum
+      - run: go build ./...
+      - run: go test ./... -v -race -count=1 -timeout 5m
+      - run: go vet ./...

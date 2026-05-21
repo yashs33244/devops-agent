@@ -1,0 +1,42 @@
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: go-api-http-scaler
+  namespace: default
+  annotations:
+    # Car-painter pattern: pods → 0 on idle, back up in <60s
+    devops-agent/pattern: "car-painter-scale-to-zero"
+spec:
+  hosts:
+    - go-api.default.svc.cluster.local
+  pathPrefixes:
+    - /
+  scaleTargetRef:
+    deployment: go-api
+    service: go-api
+    port: 8080
+  replicas:
+    min: 0
+    max: 10
+  scaledownPeriod: 300   # 5 minutes idle → scale to 0
+  targetPendingRequests: 100
+---
+# KEDA ScaledObject for CPU/memory-based scaling (non-HTTP workloads)
+# Uncomment if using event-driven (SQS, Service Bus, Pub/Sub, etc.)
+#
+# apiVersion: keda.sh/v1alpha1
+# kind: ScaledObject
+# metadata:
+#   name: go-api-event-scaler
+#   namespace: default
+# spec:
+#   scaleTargetRef:
+#     name: go-api
+#   minReplicaCount: 0
+#   maxReplicaCount: 10
+#   cooldownPeriod: 300
+#   triggers:
+#     - type: aws-sqs-queue           # or azure-servicebus / gcp-pubsub
+#       metadata:
+#         queueURL: YOUR_QUEUE_URL
+#         queueLength: "5"
