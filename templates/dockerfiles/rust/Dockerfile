@@ -91,7 +91,7 @@ WORKDIR /
 # Copy only the stripped static binary.
 COPY --from=builder --chown=nonroot:nonroot /out-binary /{{BINARY_NAME}}
 
-EXPOSE {{PORT}}
+EXPOSE 8080
 
 # Execute the binary directly — no shell, no entrypoint wrapper.
 ENTRYPOINT ["/{{BINARY_NAME}}"]

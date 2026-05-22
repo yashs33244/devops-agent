@@ -3,8 +3,6 @@
 
 import argparse
 import json
-import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -97,7 +95,7 @@ def main():
         print(f"[cicd_setup] Wrote {dst}")
 
     # Write a secrets reference doc
-    secrets_doc = f"""# GitHub Secrets & Variables Required
+    secrets_doc = """# GitHub Secrets & Variables Required
 
 ## Repository Secrets (Settings → Secrets and variables → Actions)
 """

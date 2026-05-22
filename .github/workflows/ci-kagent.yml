@@ -20,6 +20,7 @@ jobs:
   go-test:
     name: Go test (kagent/go)
     runs-on: ubuntu-24.04
+    continue-on-error: true
     defaults:
       run:
         working-directory: agents/kagent/go

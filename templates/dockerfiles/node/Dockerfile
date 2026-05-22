@@ -110,7 +110,7 @@ COPY --from=builder --chown=nonroot:nonroot /app/dist         ./dist
 # Package manifest required by some frameworks for module resolution.
 COPY --from=builder --chown=nonroot:nonroot /app/package.json ./package.json
 
-EXPOSE {{PORT}}
+EXPOSE 8080
 
 # CMD must reference the JS file directly — no shell wrapper allowed.
 CMD ["dist/index.js"]

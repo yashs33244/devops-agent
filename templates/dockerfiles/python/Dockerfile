@@ -86,7 +86,7 @@ COPY --from=builder --chown=nonroot:nonroot /usr/local/lib/python3.12/site-packa
 # Copy application source.
 COPY --from=builder --chown=nonroot:nonroot /app .
 
-EXPOSE {{PORT}}
+EXPOSE 8080
 
 # uvicorn entry point — adjust {{MAIN_FILE}} to match your app (e.g. main:app).
 # The Python interpreter in distroless is at /usr/bin/python3.

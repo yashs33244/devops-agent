@@ -85,7 +85,7 @@ COPY --from=builder --chown=appuser:appgroup /dist/app.jar ./app.jar
 # Drop privileges before starting the JVM.
 USER appuser
 
-EXPOSE {{PORT}}
+EXPOSE 8080
 
 # -XX:+UseContainerSupport — JVM respects cgroup CPU/memory limits (default in JDK 11+,
 #   explicit here for clarity).

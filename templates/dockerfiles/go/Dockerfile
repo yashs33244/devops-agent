@@ -72,9 +72,9 @@ FROM gcr.io/distroless/static-debian12:nonroot AS runner
 WORKDIR /
 
 # Copy only the compiled binary — nothing else is needed for a static Go binary.
-COPY --from=builder --chown=nonroot:nonroot /out/{{BINARY_NAME}} /{{BINARY_NAME}}
+COPY --from=builder --chown=nonroot:nonroot /out/server /server
 
-EXPOSE {{PORT}}
+EXPOSE 8080
 
 # Execute the binary directly — no shell wrapper.
-ENTRYPOINT ["/{{BINARY_NAME}}"]
+ENTRYPOINT ["/server"]

@@ -2,9 +2,6 @@
 """Full DevOps pipeline orchestrator — runs all steps in sequence."""
 
 import argparse
-import json
-import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -164,7 +161,7 @@ def main():
     # ── Step 7: Monitoring Setup ──────────────────────────────────────────
     if not args.skip_monitoring:
         print_separator("Step 7: Monitoring (Prometheus + Grafana)")
-        print(f"[workflow] Starting local Prometheus + Grafana stack...")
+        print("[workflow] Starting local Prometheus + Grafana stack...")
         monitoring_compose = ROOT_DIR / "templates" / "monitoring" / "docker-compose.monitoring.yml"
         result = subprocess.run(
             f"docker compose -f {monitoring_compose} up -d",

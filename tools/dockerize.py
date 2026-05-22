@@ -3,8 +3,6 @@
 
 import argparse
 import json
-import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -155,7 +153,7 @@ def main():
     if not ok:
         print(f"[dockerize] Build FAILED. Output:\n{output[-3000:]}")
     else:
-        print(f"[dockerize] Build succeeded.")
+        print("[dockerize] Build succeeded.")
 
     print(json.dumps({
         "success": ok,

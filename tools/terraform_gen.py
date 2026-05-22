@@ -3,7 +3,6 @@
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -54,7 +53,7 @@ def run_terraform_validate(tf_dir: Path) -> tuple[bool, str]:
     if not shutil.which("terraform"):
         return True, "terraform not in PATH, skipping validation"
 
-    fmt = subprocess.run(["terraform", "fmt", "-recursive"], cwd=tf_dir, capture_output=True, text=True)
+    subprocess.run(["terraform", "fmt", "-recursive"], cwd=tf_dir, capture_output=True, text=True)
     validate = subprocess.run(
         ["terraform", "init", "-backend=false", "-input=false"],
         cwd=tf_dir, capture_output=True, text=True, timeout=60
@@ -154,7 +153,7 @@ terraform apply
     # Validate
     validate_ok, validate_msg = True, "skipped"
     if not args.no_validate:
-        print(f"[terraform_gen] Running terraform fmt + validate...")
+        print("[terraform_gen] Running terraform fmt + validate...")
         validate_ok, validate_msg = run_terraform_validate(output_dir)
         status = "passed" if validate_ok else "FAILED"
         print(f"[terraform_gen] Validation {status}: {validate_msg}")

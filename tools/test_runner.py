@@ -25,7 +25,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -219,7 +219,7 @@ def test_dockerfile(repo_path: Path, service: str, fail_fast: bool) -> list[Test
             results.append(TestResult("Dockerfile", "trivy scan", Status.PASSED,
                                       "No HIGH/CRITICAL CVEs", duration))
         else:
-            cve_lines = [l for l in combined.splitlines() if "CVE-" in l]
+            cve_lines = [ln for ln in combined.splitlines() if "CVE-" in ln]
             detail = f"{len(cve_lines)} HIGH/CRITICAL CVE(s) — see output:\n{combined[:800]}"
             results.append(TestResult("Dockerfile", "trivy scan", Status.FAILED, detail, duration))
             if fail_fast:
@@ -293,7 +293,7 @@ def test_terraform(terraform_dir: Optional[Path], fail_fast: bool) -> list[TestR
         if rc == 0:
             issue_count = combined.count("Warning") + combined.count("Error")
             results.append(TestResult("Terraform", "tflint", Status.PASSED,
-                                      f"0 issues" if issue_count == 0 else combined, duration))
+                                      "0 issues" if issue_count == 0 else combined, duration))
         else:
             results.append(TestResult("Terraform", "tflint", Status.FAILED, combined, duration))
             if fail_fast:
@@ -311,7 +311,7 @@ def test_terraform(terraform_dir: Optional[Path], fail_fast: bool) -> list[TestR
         if rc == 0:
             results.append(TestResult("Terraform", "checkov", Status.PASSED, "", duration))
         else:
-            failed_checks = [l for l in combined.splitlines() if "FAILED" in l]
+            failed_checks = [ln for ln in combined.splitlines() if "FAILED" in ln]
             detail = f"{len(failed_checks)} check(s) failed"
             results.append(TestResult("Terraform", "checkov", Status.FAILED, detail, duration))
             if fail_fast:
@@ -433,7 +433,7 @@ def test_helm(helm_dir: Optional[Path], service: str, fail_fast: bool) -> list[T
         duration = time.monotonic() - t
         combined = (out + err).strip()
         # extract N/N tests line
-        passed_line = next((l for l in combined.splitlines() if "Passed" in l or "passed" in l), "")
+        passed_line = next((ln for ln in combined.splitlines() if "Passed" in ln or "passed" in ln), "")
         if rc == 0:
             results.append(TestResult("Helm", "unittest", Status.PASSED,
                                       passed_line or "All tests passed", duration))
@@ -563,7 +563,7 @@ def test_integration(
 
         # ── health check ─────────────────────────────────────────────────────
         t = time.monotonic()
-        health_url = f"http://localhost:8080/health"  # port-forward not set up here; best-effort
+        health_url = "http://localhost:8080/health"  # port-forward not set up here; best-effort
         rc_curl, out_curl, _ = _run(["curl", "-sf", "--max-time", "10", health_url])
         duration = time.monotonic() - t
         if rc_curl == 0:
@@ -620,7 +620,6 @@ def print_results(results: list[TestResult]) -> None:
     passed  = sum(1 for r in results if r.status == Status.PASSED)
     failed  = sum(1 for r in results if r.status == Status.FAILED)
     skipped = sum(1 for r in results if r.status in (Status.SKIPPED, Status.ERROR))
-    total   = len(results)
 
     status_summary = f"{GREEN}{passed} PASSED{RESET}"
     if failed:
