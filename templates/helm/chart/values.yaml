@@ -1,9 +1,9 @@
-# Default values for {{SERVICE_NAME}}.
+# Default values for service-template.
 # Override per-environment via values-dev.yaml, values-staging.yaml, values-prod.yaml
 
 # -- Container image configuration
 image:
-  repository: "{{REGISTRY}}/{{IMAGE_NAME}}"
+  repository: "ghcr.io/example/service"
   tag: "latest"
   pullPolicy: IfNotPresent
 
@@ -14,7 +14,7 @@ replicaCount: 1
 service:
   type: ClusterIP
   port: 80
-  targetPort: {{PORT}}
+  targetPort: 8080
   annotations: {}
 
 # -- Ingress configuration
@@ -25,14 +25,14 @@ ingress:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
   hosts:
-    - host: "{{SERVICE_NAME}}.example.com"
+    - host: "service-template.example.com"
       paths:
         - path: /
           pathType: Prefix
   tls:
-    - secretName: "{{SERVICE_NAME}}-tls"
+    - secretName: "service-template-tls"
       hosts:
-        - "{{SERVICE_NAME}}.example.com"
+        - "service-template.example.com"
 
 # -- Resource requests and limits
 resources:
@@ -164,7 +164,7 @@ affinity:
         podAffinityTerm:
           labelSelector:
             matchLabels:
-              app.kubernetes.io/name: "{{SERVICE_NAME}}"
+              app.kubernetes.io/name: "service-template"
           topologyKey: topology.kubernetes.io/zone
 
 # -- Extra volumes (e.g. emptyDir for tmp when readOnlyRootFilesystem is true)

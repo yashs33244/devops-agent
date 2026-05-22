@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@0aaccfd150d50ccaeb58c55ab2f0e6fc5fcba7c6 # v5.4.0
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
         with:
           go-version-file: agents/nightshift/go.mod
           cache-dependency-path: agents/nightshift/go.sum
