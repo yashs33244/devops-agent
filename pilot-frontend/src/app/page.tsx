@@ -4,6 +4,7 @@ import { PainSection } from "@/components/PainSection";
 import { BentoSection } from "@/components/BentoSection";
 import { Integrations } from "@/components/Integrations";
 import { HowItWorks } from "@/components/HowItWorks";
+import { SlashCommands } from "@/components/SlashCommands";
 import { SecuritySection } from "@/components/SecuritySection";
 import { FAQSection } from "@/components/FAQSection";
 import { CTASection } from "@/components/CTASection";
@@ -23,6 +24,7 @@ export default function Home() {
       <Integrations />
       <PixBar />
       <HowItWorks />
+      <SlashCommands />
       <SecuritySection />
       <PixBar variant="flip" />
       <FAQSection />
