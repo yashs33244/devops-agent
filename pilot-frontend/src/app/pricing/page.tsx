@@ -84,8 +84,8 @@ function Terminal() {
     let i = 0;
     const interval = setInterval(() => {
       if (i < MANIFESTO_LINES.length) {
-        setLines((prev) => [...prev, MANIFESTO_LINES[i]]);
-        i++;
+        const idx = i++;
+        setLines((prev) => [...prev, MANIFESTO_LINES[idx]]);
       } else {
         clearInterval(interval);
       }
