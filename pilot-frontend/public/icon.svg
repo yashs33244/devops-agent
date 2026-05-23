@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Background -->
+  <rect width="32" height="32" fill="#0a0a0b"/>
+  <!-- White square (the pilot mark) -->
+  <rect x="4" y="4" width="24" height="24" fill="#ece9e0"/>
+  <!-- Top-left cutout -->
+  <rect x="7" y="7" width="9" height="9" fill="#0a0a0b"/>
+  <!-- Bottom-right cutout -->
+  <rect x="16" y="16" width="9" height="9" fill="#0a0a0b"/>
+</svg>

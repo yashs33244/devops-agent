@@ -1,0 +1,12 @@
+{
+  "name": "Pilot — AI DevOps Agent",
+  "short_name": "Pilot",
+  "description": "Autonomous DevOps agent. Give it a repo — it writes the Dockerfile, Terraform, Helm chart, and CI/CD pipeline automatically.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0b",
+  "theme_color": "#0a0a0b",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
