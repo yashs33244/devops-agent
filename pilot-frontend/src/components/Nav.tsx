@@ -22,13 +22,10 @@ export function Nav() {
         <a href="#security">Security</a>
         <a href="#integrations">Integrations</a>
         <a href="#pricing">Pricing</a>
-        <a href="#docs">Docs</a>
+        <a href="/docs">Docs</a>
       </div>
       <div className="nav-cta">
-        <a href="#" className="btn btn-ghost">
-          Sign in
-        </a>
-        <a href="#" className="btn btn-primary">
+<a href="#" className="btn btn-primary">
           Deploy free <span className="arrow"></span>
         </a>
       </div>
