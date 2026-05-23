@@ -97,18 +97,18 @@ export function Hero() {
         /* ── Hero layout ── */
         .hero { padding-top: 61px; }
         .hero-wrap {
-          max-width: 1200px;
-          margin: 0 auto;
-          padding: 80px 24px 96px;
+          width: 100%;
+          padding: 80px 5vw 96px;
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 48px;
           align-items: center;
+          box-sizing: border-box;
         }
         @media (max-width: 900px) {
           .hero-wrap {
             grid-template-columns: 1fr;
-            padding: 56px 16px 72px;
+            padding: 56px 24px 72px;
             gap: 48px;
           }
         }
@@ -245,9 +245,7 @@ export function Hero() {
 
         /* ── Stats row ── */
         .hero-stats {
-          max-width: 1200px;
-          margin: 0 auto;
-          padding: 40px 24px 80px;
+          width: 100%;
           display: grid;
           grid-template-columns: repeat(4, 1fr);
           gap: 1px;
@@ -256,10 +254,10 @@ export function Hero() {
         }
         @media (max-width: 700px) {
           .hero-stats { grid-template-columns: repeat(2, 1fr); }
-          .hero-wrap { padding: 48px 16px 60px; }
+          .hero-wrap { padding: 48px 20px 60px; }
         }
         .hero-stat {
-          padding: 32px 24px;
+          padding: 32px 5vw;
           background: var(--bg-dark);
           display: flex;
           flex-direction: column;
