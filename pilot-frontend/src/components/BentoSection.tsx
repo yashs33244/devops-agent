@@ -230,9 +230,11 @@ export function BentoSection() {
                     <rect x="206" y="60" width="40" height="30" fill="#0a0a0b" stroke="#c43d28" />
                     <text x="226" y="78" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="9" fill="#c43d28">v27 ✗</text>
                   </g>
-                  <path d="M226,110 Q200,150 178,110" stroke="#9b5cff" strokeWidth="1.6" fill="none" />
-                  <polygon points="178,108 172,118 184,118" fill="#9b5cff" />
-                  <text x="170" y="160" fontFamily="JetBrains Mono" fontSize="10" fill="#9b5cff">↺ pilot reverted in 11s</text>
+                  {/* Revert arc — goes ABOVE the version boxes */}
+                  <path d="M226,60 Q202,18 178,60" stroke="#9b5cff" strokeWidth="1.6" fill="none"/>
+                  {/* Arrowhead pointing left at arrival */}
+                  <polygon points="178,60 187,54 187,66" fill="#9b5cff"/>
+                  <text x="170" y="155" fontFamily="JetBrains Mono" fontSize="10" fill="#9b5cff">↺ reverted in 11s</text>
                 </g>
               </svg>
             </div>
