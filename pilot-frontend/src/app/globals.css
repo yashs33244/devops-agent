@@ -479,9 +479,8 @@ img, svg { display: block; }
   position: relative;
   overflow: hidden;
   display: flex; flex-direction: column;
-  transition: background .25s ease, border-color .25s ease;
 }
-.bento-card:hover { background: var(--bg-dark-3); border-color: var(--line-dark-2); }
+
 
 .bento-card h3 {
   font-family: "Inter Tight", sans-serif;
@@ -757,8 +756,6 @@ footer {
 }
 
 /* Hover micro-animations on bento illustrations */
-.bento-card:hover .lift { transform: translateY(-4px); }
-.bento-card .lift { transition: transform .35s ease; }
 .bento-card .pulse { animation: blink 2s ease-in-out infinite; }
 @keyframes blink {
   0%, 100% { opacity: 0.4; }
