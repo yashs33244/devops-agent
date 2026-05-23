@@ -13,7 +13,7 @@ export function Footer() {
             <span style={{ color: "var(--ink-quiet)" }}>© 2026</span>
           </div>
           <div className="links">
-            <a href="#">Docs</a>
+            <a href="/docs">Docs</a>
             <a href="#">Changelog</a>
             <a href="#">Status</a>
             <a href="#">Security</a>

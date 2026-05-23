@@ -13,10 +13,10 @@ export function CTASection() {
             deploy. No card. No sales call. No yak shaving.
           </p>
           <div className="cta-buttons">
-            <a href="#" className="btn btn-primary">
+            <a href="https://github.com/yashs33244/devops-agent" target="_blank" rel="noopener noreferrer" className="btn btn-primary">
               Deploy your first service <span className="arrow"></span>
             </a>
-            <a href="#" className="btn btn-ghost">
+            <a href="https://github.com/yashs33244/devops-agent" target="_blank" rel="noopener noreferrer" className="btn btn-ghost">
               Talk to a human first
             </a>
           </div>

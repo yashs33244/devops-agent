@@ -107,7 +107,7 @@ export function HowItWorks() {
           <p className="mono" style={{ fontSize: "12px", color: "var(--ink-quiet)" }}>
             // ALL THREE STEPS, FIRST DEPLOY, UNDER 11 MINUTES MEDIAN
           </p>
-          <a href="#" className="btn btn-dark">
+          <a href="https://github.com/yashs33244/devops-agent" target="_blank" rel="noopener noreferrer" className="btn btn-dark">
             Read the technical brief <span className="arrow"></span>
           </a>
         </div>
