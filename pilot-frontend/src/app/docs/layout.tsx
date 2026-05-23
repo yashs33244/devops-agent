@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Nav } from "@/components/Nav";
 
 export const metadata: Metadata = {
   title: "Docs — Pilot DevOps Agent",
@@ -79,6 +80,8 @@ export default function DocsLayout({
   children: React.ReactNode;
 }) {
   return (
+    <>
+    <Nav />
     <div style={{ display: "flex", minHeight: "100vh", paddingTop: "61px" }}>
       {/* Sidebar */}
       <aside
@@ -161,11 +164,33 @@ export default function DocsLayout({
           ))}
         </nav>
 
+        {/* Back to landing */}
+        <div style={{ padding: "20px 20px 0", borderTop: "1px solid var(--line-dark)", marginTop: "8px" }}>
+          <Link
+            href="/"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "12px",
+              color: "var(--text-on-dark-soft)",
+              transition: "color .15s",
+            }}
+            className="docs-back-link"
+          >
+            <span style={{ fontSize: "14px" }}>←</span>
+            Back to Pilot
+          </Link>
+        </div>
+
         <style>{`
           .docs-sidebar-link:hover {
             color: var(--text-on-dark) !important;
             border-left-color: var(--accent) !important;
             background: rgba(255,255,255,0.03);
+          }
+          .docs-back-link:hover {
+            color: var(--text-on-dark) !important;
           }
         `}</style>
       </aside>
@@ -182,5 +207,6 @@ export default function DocsLayout({
         {children}
       </main>
     </div>
+    </>
   );
 }
