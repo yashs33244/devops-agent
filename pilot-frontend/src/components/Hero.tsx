@@ -1,376 +1,349 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+type LineKind = "cmd" | "blank" | "step" | "sub" | "success" | "detail";
+type LogLine  = { id: number; text: string; kind: LineKind };
+
+const SCRIPT: Array<{ at: number; text: string; kind: LineKind }> = [
+  { at: 350,  kind: "cmd",     text: "$ pilot deploy payment-api --cloud aws --env prod" },
+  { at: 1050, kind: "blank",   text: "" },
+  { at: 1150, kind: "step",    text: "  ◆  scanning repository              ✓  187ms" },
+  { at: 1500, kind: "step",    text: "  ◆  generating Dockerfile             ✓   91ms" },
+  { at: 1800, kind: "step",    text: "  ◆  provisioning terraform (EKS)      ✓   2.1s" },
+  { at: 2000, kind: "sub",     text: "     ├  vpc.tf" },
+  { at: 2120, kind: "sub",     text: "     ├  eks-cluster.tf" },
+  { at: 2240, kind: "sub",     text: "     └  iam-oidc.tf" },
+  { at: 2440, kind: "step",    text: "  ◆  building helm chart               ✓   44ms" },
+  { at: 2680, kind: "step",    text: "  ◆  writing ci/cd pipeline (OIDC)     ✓  122ms" },
+  { at: 2920, kind: "step",    text: "  ◆  test suite · 7 checks             ✓   3.2s" },
+  { at: 3150, kind: "blank",   text: "" },
+  { at: 3350, kind: "success", text: "  ✓  DEPLOYED  payment-api → us-east-1" },
+  { at: 3600, kind: "detail",  text: "     3 replicas  ·  $0.003/req  ·  healthy" },
+];
+
+function lineColor(kind: LineKind): string {
+  if (kind === "cmd")     return "var(--text-on-dark)";
+  if (kind === "success") return "var(--good)";
+  if (kind === "step")    return "var(--text-on-dark-soft)";
+  if (kind === "sub")     return "rgba(156,156,163,0.55)";
+  if (kind === "detail")  return "rgba(156,156,163,0.7)";
+  return "transparent";
+}
+
+function DeployConsole() {
+  const [lines,  setLines]  = useState<LogLine[]>([]);
+  const [cursor, setCursor] = useState(true);
+  const [done,   setDone]   = useState(false);
+
+  useEffect(() => {
+    const timers = SCRIPT.map((s, i) =>
+      setTimeout(() => {
+        setLines(prev => [...prev, { id: i, text: s.text, kind: s.kind }]);
+        if (i === SCRIPT.length - 1) setDone(true);
+      }, s.at)
+    );
+    const blink = setInterval(() => setCursor(c => !c), 520);
+    return () => { timers.forEach(clearTimeout); clearInterval(blink); };
+  }, []);
+
+  return (
+    <div className="console-card">
+      {/* title bar */}
+      <div className="console-bar">
+        <span className="cc-dot" style={{ background: "#ff5f56" }} />
+        <span className="cc-dot" style={{ background: "#ffbd2e" }} />
+        <span className="cc-dot" style={{ background: "#27c93f" }} />
+        <span className="cc-title">pilot — deploy</span>
+        {done && (
+          <span className="cc-badge">
+            <span className="cc-badge-dot" /> live
+          </span>
+        )}
+      </div>
+
+      {/* body */}
+      <div className="console-body">
+        {lines.map(l => (
+          l.kind === "blank"
+            ? <div key={l.id} style={{ height: "0.9em" }} />
+            : (
+              <div
+                key={l.id}
+                className={`cc-line ${l.kind === "success" ? "cc-success" : ""}`}
+                style={{ color: lineColor(l.kind) }}
+              >
+                {l.text}
+              </div>
+            )
+        ))}
+        {!done && (
+          <span
+            className="cc-cursor"
+            style={{ opacity: cursor ? 1 : 0 }}
+          >
+            ▌
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Hero() {
   return (
     <header className="hero bg-dark">
-      {/* Responsive CSS specifically injected for mobile-friendliness and animations */}
-      <style dangerouslySetInnerHTML={{
-        __html: `
-          .hero-container {
-            padding: 4rem 2rem 5rem;
-            max-width: 1200px;
-            margin: 0 auto;
-            overflow: hidden;
-          }
-
-          .hero-inner {
-            display: flex;
-            flex-direction: column;
-            gap: 3rem;
-            align-items: center;
-          }
-
-          .hero-left {
-            flex: 1;
-            width: 100%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            gap: 0.25rem;
-          }
-          
-          .hero-right {
-            min-width: 50%;
-            margin-top: -2rem;
-            align-self: center;
-          }
-          
-          .hero-cta {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            width: 100%;
-            max-width: 320px;
-            margin-top: 0.5rem;
-          }
-          
-          .btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 0.875rem 1.5rem;
-            border-radius: 4px;
-            font-weight: 600;
-            text-decoration: none;
-            transition: all 0.2s ease;
-          }
-          
-          .btn-primary {
-            background: #7c3cf0;
-            color: #fff;
-          }
-          
-          .btn-ghost {
-            background: transparent;
-            color: #fff;
-            border: 1px solid #3a3a40;
-          }
-
-          .hero-stats {
-            display: grid;
+      <style dangerouslySetInnerHTML={{ __html: `
+        /* ── Hero layout ── */
+        .hero { padding-top: 61px; }
+        .hero-wrap {
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 80px 40px 96px;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 64px;
+          align-items: center;
+        }
+        @media (max-width: 900px) {
+          .hero-wrap {
             grid-template-columns: 1fr;
-            gap: 2rem;
-            margin-top: 3rem;
-            border-top: 1px solid #2a2a30;
-            padding-top: 3rem;
+            padding: 56px 24px 72px;
+            gap: 48px;
           }
-          
-          .hero-stat {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-          }
-          
-          .logos-row {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 1.5rem;
-            align-items: center;
-            color: #fff;
-            opacity: 0.6;
-          }
+        }
 
-          /* Desktop Overrides */
-          @media (min-width: 768px) {
-            .hero-stats {
-              grid-template-columns: repeat(2, 1fr);
-            }
-          }
+        /* ── Left ── */
+        .hero-left { display: flex; flex-direction: column; align-items: flex-start; gap: 0; }
 
-          @media (min-width: 1024px) {
-            .hero-container {
-              padding: 0rem 0rem 4rem;
-            }
-            .hero-inner {
-              flex-direction: row;
-              gap: 5rem;
-              align-items: center;
-            }
-            .hero-left {
-              align-items: flex-start;
-              text-align: left;
-            }
-            .hero-cta {
-              flex-direction: row;
-              max-width: none;
-              justify-content: flex-start;
-            }
-            .hero-right {
-              min-width: 52%;
-              margin-top: 0;
-            }
-            .hero-stats {
-              grid-template-columns: repeat(4, 1fr);
-              margin-top: 5rem;
-            }
-            .hero-stat {
-              align-items: flex-start;
-              text-align: left;
-            }
-            .logos-row {
-              gap: 3rem;
-            }
-          }
+        .hero-eyebrow {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          font-family: "JetBrains Mono", monospace;
+          font-size: 11px;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: var(--text-on-dark-soft);
+          border: 1px solid var(--line-dark-2);
+          border-radius: 2px;
+          padding: 4px 10px;
+          margin-bottom: 28px;
+        }
+        .hero-pulse {
+          width: 7px; height: 7px;
+          background: var(--good);
+          border-radius: 50%;
+          box-shadow: 0 0 0 0 var(--good);
+          animation: pulse-ring 2s ease-out infinite;
+        }
+        @keyframes pulse-ring {
+          0%   { box-shadow: 0 0 0 0 oklch(72% 0.16 150 / 0.7); }
+          70%  { box-shadow: 0 0 0 6px oklch(72% 0.16 150 / 0); }
+          100% { box-shadow: 0 0 0 0 oklch(72% 0.16 150 / 0); }
+        }
 
-          /* Simple Glow Animation on Hover (No Transform/Bounce) */
-          .hover-lift {
-            transition: filter 0.3s ease;
-            cursor: crosshair;
-          }
-          .hover-lift:hover {
-            filter: drop-shadow(0px 0px 20px rgba(155, 92, 255, 0.8)) brightness(1.3);
-          }
-          
-          /* Smooth, Unidirectional Flow Animations */
-          .pipeline-flow {
-            stroke-dasharray: 12 12;
-            animation: flowAnim 3s linear infinite;
-          }
-          .pipeline-flow-reverse {
-            stroke-dasharray: 12 12;
-            animation: flowAnimRev 3s linear infinite;
-          }
-          
-          @keyframes flowAnim { 
-            0% { stroke-dashoffset: 24; } 
-            100% { stroke-dashoffset: 0; } 
-          }
-          @keyframes flowAnimRev { 
-            0% { stroke-dashoffset: -24; } 
-            100% { stroke-dashoffset: 0; } 
-          }
-        `
-      }} />
+        .hero-h1 {
+          font-family: "Instrument Serif", "Times New Roman", serif;
+          font-weight: 400;
+          font-size: clamp(2.6rem, 4.5vw, 3.75rem);
+          line-height: 1.06;
+          letter-spacing: -0.025em;
+          color: var(--text-on-dark);
+          margin: 0 0 24px;
+        }
+        .hero-h1 em {
+          font-style: italic;
+          color: var(--accent);
+        }
 
-      <div className="hero-container">
-        <div className="hero-inner">
-          {/* LEFT SIDE: Content */}
-          <div className="hero-left">
-            <span style={{ display: "inline-flex", alignItems: "center", marginBottom: "2rem", padding: "0.5rem 1.25rem", background: "rgba(155, 92, 255, 0.1)", color: "#9b5cff", borderRadius: "100px", fontSize: "0.875rem", fontFamily: "monospace" }}>
-              <span style={{ width: "8px", height: "8px", background: "#22c55e", borderRadius: "50%", marginRight: "8px", boxShadow: "0 0 8px #22c55e" }}></span>
-              AGENT v2.0 LIVE IN PROD
-            </span>
-            <h1 className="h-serif" style={{ fontSize: "clamp(2.8rem, 5.5vw, 4.25rem)", lineHeight: 1.15, marginBottom: "2rem", color: "#fff", fontWeight: 800, letterSpacing: "-0.02em" }}>
-              The AI Site Reliability<br />
-              Engineer that <em style={{ color: "#9b5cff", fontStyle: "italic" }}>never</em> sleeps.
-            </h1>
-            <p className="hero-sub" style={{ fontSize: "1.2rem", color: "#9c9ca3", lineHeight: 1.75, marginBottom: "2.5rem", maxWidth: "500px" }}>
-              Provisions infra, runs deployments, and remediates drift — automatically. You push code. Pilot handles the pager.
-            </p>
-            <div className="hero-cta">
-              <a href="https://github.com/yashs33244/devops-agent" target="_blank" rel="noopener noreferrer" className="btn btn-primary">
-                Deploy Agent
-              </a>
-              <a href="https://github.com/yashs33244/devops-agent" target="_blank" rel="noopener noreferrer" className="btn btn-ghost">
-                View Audit Logs
-              </a>
-            </div>
+        .hero-sub {
+          font-family: "Inter Tight", sans-serif;
+          font-size: clamp(15px, 1.6vw, 17px);
+          color: var(--text-on-dark-soft);
+          line-height: 1.7;
+          max-width: 46ch;
+          margin: 0 0 36px;
+        }
+
+        .hero-cta {
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+
+        /* ── Right: console ── */
+        .console-card {
+          border: 1px solid var(--line-dark-2);
+          border-radius: 8px;
+          overflow: hidden;
+          background: var(--bg-dark-3);
+          box-shadow: 0 0 0 1px var(--line-dark), 0 32px 80px rgba(0,0,0,0.5), 0 0 60px oklch(70% 0.20 295 / 0.06);
+          width: 100%;
+        }
+        .console-bar {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          padding: 11px 16px;
+          background: var(--bg-dark-2);
+          border-bottom: 1px solid var(--line-dark);
+        }
+        .cc-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+        .cc-title {
+          font-family: "JetBrains Mono", monospace;
+          font-size: 11px;
+          color: var(--text-on-dark-soft);
+          margin-left: auto;
+          letter-spacing: 0.06em;
+        }
+        .cc-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          font-family: "JetBrains Mono", monospace;
+          font-size: 10px;
+          letter-spacing: 0.08em;
+          color: var(--good);
+          border: 1px solid oklch(72% 0.16 150 / 0.3);
+          border-radius: 2px;
+          padding: 2px 7px;
+          margin-left: 10px;
+        }
+        .cc-badge-dot {
+          width: 5px; height: 5px;
+          background: var(--good);
+          border-radius: 50%;
+          animation: pulse-ring 2s ease-out infinite;
+        }
+        .console-body {
+          padding: 20px 22px 24px;
+          font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+          font-size: 12.5px;
+          line-height: 1.85;
+          min-height: 320px;
+          overflow: hidden;
+        }
+        .cc-line { display: block; white-space: pre; }
+        .cc-success {
+          font-weight: 600;
+          position: relative;
+        }
+        .cc-success::before {
+          content: "";
+          position: absolute;
+          left: -22px; right: -22px;
+          top: 0; bottom: 0;
+          background: oklch(72% 0.16 150 / 0.05);
+        }
+        .cc-cursor {
+          display: inline-block;
+          color: var(--accent);
+          font-size: 14px;
+          line-height: 1;
+        }
+
+        /* ── Stats row ── */
+        .hero-stats {
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 40px 40px 80px;
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 1px;
+          background: var(--line-dark);
+          border-top: 1px solid var(--line-dark);
+        }
+        @media (max-width: 700px) {
+          .hero-stats { grid-template-columns: repeat(2, 1fr); }
+          .hero-wrap { padding: 48px 20px 60px; }
+        }
+        .hero-stat {
+          padding: 32px 24px;
+          background: var(--bg-dark);
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .stat-n {
+          font-family: "Instrument Serif", serif;
+          font-size: 2.6rem;
+          line-height: 1;
+          color: var(--text-on-dark);
+          letter-spacing: -0.03em;
+        }
+        .stat-n span { color: var(--accent); font-size: 1.6rem; }
+        .stat-n .green { color: var(--good); }
+        .stat-l {
+          font-family: "JetBrains Mono", monospace;
+          font-size: 11px;
+          color: var(--text-on-dark-soft);
+          letter-spacing: 0.04em;
+          line-height: 1.5;
+        }
+      `}} />
+
+      <div className="hero-wrap">
+        {/* ── LEFT ── */}
+        <div className="hero-left">
+          <div className="hero-eyebrow">
+            <span className="hero-pulse" />
+            AI DevOps Agent · Open Source
           </div>
 
-          {/* RIGHT SIDE: Tightly cropped SVG viewBox to remove excess top/bottom space */}
-          <div className="hero-right" style={{ marginTop: "-2rem" }}>
-            <svg
-              className="hero-iso"
-              viewBox="0 100 800 600"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
-              style={{ width: "100%", height: "auto", display: "block" }}
+          <h1 className="hero-h1">
+            The DevOps agent<br />
+            that ships the<br />
+            <em>whole pipeline.</em>
+          </h1>
+
+          <p className="hero-sub">
+            Give Pilot a GitHub repo and a cloud provider — it writes the
+            Dockerfile, Terraform, Helm chart, and CI/CD pipeline, then
+            monitors and scales your service automatically.
+          </p>
+
+          <div className="hero-cta">
+            <a
+              href="https://github.com/yashs33244/devops-agent"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-primary"
             >
-              <defs>
-                <pattern id="pixGrad" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
-                  <rect width="12" height="12" fill="#5b1bd6" />
-                  <rect width="6" height="6" fill="#9b5cff" />
-                  <rect x="6" y="6" width="6" height="6" fill="#7c3cf0" />
-                </pattern>
-
-                <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
-                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                </filter>
-
-                {/* Cube Prototypes */}
-                <g id="gray-cube">
-                  <polygon points="0,0 60,-30 120,0 60,30" fill="#2a2a30" stroke="#3a3a40" strokeWidth="1.5" strokeLinejoin="round" />
-                  <polygon points="0,0 0,60 60,90 60,30" fill="#0a0a0b" stroke="#1d1d22" strokeWidth="1.5" strokeLinejoin="round" />
-                  <polygon points="120,0 120,60 60,90 60,30" fill="#141418" stroke="#1d1d22" strokeWidth="1.5" strokeLinejoin="round" />
-                </g>
-
-                <g id="purple-cube">
-                  <polygon points="0,0 60,-30 120,0 60,30" fill="#7c3cf0" stroke="#9b5cff" strokeWidth="1.5" strokeLinejoin="round" />
-                  <polygon points="0,0 0,60 60,90 60,30" fill="#3d1a7a" stroke="#5b1bd6" strokeWidth="1.5" strokeLinejoin="round" />
-                  <polygon points="120,0 120,60 60,90 60,30" fill="#220d47" stroke="#5b1bd6" strokeWidth="1.5" strokeLinejoin="round" />
-                </g>
-
-                <g id="pattern-cube">
-                  <polygon points="0,0 60,-30 120,0 60,30" fill="url(#pixGrad)" stroke="#9b5cff" strokeWidth="1.5" strokeLinejoin="round" />
-                  <polygon points="0,0 0,60 60,90 60,30" fill="#3d1a7a" stroke="#0a0a0b" strokeWidth="1.5" strokeLinejoin="round" />
-                  <polygon points="120,0 120,60 60,90 60,30" fill="#141418" stroke="#0a0a0b" strokeWidth="1.5" strokeLinejoin="round" />
-                </g>
-
-                <g id="agent-cube">
-                  <use href="#gray-cube" />
-                  <g stroke="#06b6d4" strokeWidth="1.5" strokeLinecap="round">
-                    <line x1="20" y1="35" x2="45" y2="47.5" />
-                    <line x1="20" y1="45" x2="35" y2="52.5" />
-                    <line x1="20" y1="55" x2="40" y2="65" />
-                  </g>
-                  <circle cx="45" cy="30" r="3" fill="#06b6d4" filter="url(#neonGlow)" />
-                </g>
-              </defs>
-
-              {/* ================= BACKGROUND GRID ================= */}
-              <g opacity="0.1" stroke="#7c3cf0" strokeWidth="1">
-                <line x1="-200" y1="0" x2="1000" y2="600" />
-                <line x1="-200" y1="100" x2="1000" y2="700" />
-                <line x1="-200" y1="200" x2="1000" y2="800" />
-                <line x1="-200" y1="300" x2="1000" y2="900" />
-                <line x1="-200" y1="400" x2="1000" y2="1000" />
-                <line x1="-200" y1="-100" x2="1000" y2="500" />
-                <line x1="-200" y1="600" x2="1000" y2="0" />
-                <line x1="-200" y1="700" x2="1000" y2="100" />
-                <line x1="-200" y1="800" x2="1000" y2="200" />
-                <line x1="-200" y1="900" x2="1000" y2="300" />
-                <line x1="-200" y1="500" x2="1000" y2="-100" />
-                <line x1="-200" y1="400" x2="1000" y2="-200" />
-              </g>
-
-              {/* ================= THIN PIPELINE PATHS ================= */}
-              <g fill="none" strokeLinejoin="round" opacity="0.8">
-                {/* Structural Lines */}
-                <polyline points="200,500 400,400 600,500" stroke="#2a2a30" strokeWidth="2" />
-                <polyline points="300,350 400,300 500,350" stroke="#2a2a30" strokeWidth="2" />
-                <polyline points="400,400 400,300" stroke="#2a2a30" strokeWidth="2" />
-                
-                {/* Glowing Flow Lines */}
-                <polyline points="200,500 400,400 600,500" stroke="#7c3cf0" strokeWidth="1" />
-                <polyline points="200,500 400,400 600,500" stroke="#9b5cff" strokeWidth="2" className="pipeline-flow" />
-                
-                <polyline points="300,350 400,300 500,350" stroke="#06b6d4" strokeWidth="1" />
-                <polyline points="300,350 400,300 500,350" stroke="#06b6d4" strokeWidth="2" className="pipeline-flow-reverse" />
-                
-                <polyline points="400,400 400,300" stroke="#22c55e" strokeWidth="1" />
-                <polyline points="400,400 400,300" stroke="#22c55e" strokeWidth="2" className="pipeline-flow" />
-
-                {/* Packet indicators */}
-                <circle cx="280" cy="460" r="3" fill="#9b5cff" filter="url(#neonGlow)" />
-                <circle cx="520" cy="460" r="3" fill="#9b5cff" filter="url(#neonGlow)" />
-              </g>
-
-              {/* ================= CONNECTED CUBE NODES ================= */}
-              {/* Center 1: Bottom Left Node */}
-              <g transform="translate(80, 400) scale(1.9)" className="hover-lift">
-                <use href="#purple-cube" x="0" y="0" />
-              </g>
-
-              {/* Center 2: Bottom Middle Node */}
-              <g transform="translate(310, 320) scale(1.35)" className="hover-lift">
-                <use href="#pattern-cube" x="0" y="0" />
-              </g>
-
-              {/* Center 3: Bottom Right Node */}
-              <g transform="translate(510, 415) scale(1.55)" className="hover-lift">
-                <use href="#agent-cube" x="0" y="0" />
-              </g>
-
-              {/* Center 4: Top Left Node */}
-              <g transform="translate(240, 290) scale(0.85)" className="hover-lift">
-                <use href="#gray-cube" x="0" y="0" />
-              </g>
-
-              {/* Center 5: Top Middle Node */}
-              <g transform="translate(330, 220) scale(1.1)" className="hover-lift">
-                <use href="#agent-cube" x="0" y="0" />
-              </g>
-
-              {/* Center 6: Top Right Node */}
-              <g transform="translate(450, 290) scale(0.85)" className="hover-lift">
-                <use href="#purple-cube" x="0" y="0" />
-              </g>
-
-              {/* ================= SCATTERED / AMBIENT CUBES ================= */}
-              <g transform="translate(60, 180) scale(0.55)" className="hover-lift">
-                <use href="#purple-cube" x="0" y="0" />
-              </g>
-              <g transform="translate(670, 230) scale(0.65)" className="hover-lift">
-                <use href="#pattern-cube" x="0" y="0" />
-              </g>
-              <g transform="translate(120, 630) scale(0.9)" className="hover-lift">
-                <use href="#gray-cube" x="0" y="0" />
-              </g>
-              <g transform="translate(610, 600) scale(0.8)" className="hover-lift">
-                <use href="#purple-cube" x="0" y="0" />
-              </g>
-              <g transform="translate(410, 130) scale(0.45)" className="hover-lift">
-                <use href="#gray-cube" x="0" y="0" />
-              </g>
-              <g transform="translate(510, 195) scale(0.55)" className="hover-lift">
-                <use href="#gray-cube" x="0" y="0" />
-              </g>
-            </svg>
+              Deploy free <span className="arrow" />
+            </a>
+            <a
+              href="/docs/quick-start"
+              className="btn btn-ghost"
+            >
+              Read the docs
+            </a>
           </div>
         </div>
 
-        {/* Stats bar */}
-        <div className="hero-stats">
-          <div className="hero-stat">
-            <span className="n h-serif" style={{ display: "block", fontSize: "2.5rem", color: "#fff", marginBottom: "0.25rem" }}>
-              &lt; 2<span style={{ color: "#9b5cff", fontSize: "1.5rem" }}>min</span>
-            </span>
-            <span className="l mono" style={{ fontSize: "0.875rem", color: "#9c9ca3", fontFamily: "monospace" }}>mean time to recovery (MTTR)</span>
-          </div>
-          <div className="hero-stat">
-            <span className="n h-serif" style={{ display: "block", fontSize: "2.5rem", color: "#fff", marginBottom: "0.25rem" }}>
-              100<span style={{ color: "#22c55e" }}>%</span>
-            </span>
-            <span className="l mono" style={{ fontSize: "0.875rem", color: "#9c9ca3", fontFamily: "monospace" }}>infrastructure drift remediated</span>
-          </div>
-          <div className="hero-stat">
-            <span className="n h-serif" style={{ display: "block", fontSize: "2.5rem", color: "#fff", marginBottom: "0.25rem" }}>$0.02</span>
-            <span className="l mono" style={{ fontSize: "0.875rem", color: "#9c9ca3", fontFamily: "monospace" }}>compute cost per pipeline run</span>
-          </div>
-          <div className="hero-stat">
-            <span className="n h-serif" style={{ display: "block", fontSize: "2.5rem", color: "#fff", marginBottom: "0.25rem" }}>
-              ∞
-            </span>
-            <span className="l mono" style={{ fontSize: "0.875rem", color: "#9c9ca3", fontFamily: "monospace" }}>midnight alerts handled solo</span>
-          </div>
+        {/* ── RIGHT: animated deploy console ── */}
+        <div>
+          <DeployConsole />
         </div>
+      </div>
 
-        {/* Logo strip */}
-        <div style={{ marginTop: "4rem", textAlign: "center" }}>
-          <span style={{ display: "block", fontSize: "0.875rem", color: "#9c9ca3", marginBottom: "1.5rem", textTransform: "uppercase", letterSpacing: "1px" }}>
-            Automating infrastructure for engineering teams at
-          </span>
-          <div className="logos-row">
-            <span style={{ fontSize: "16px", fontWeight: "bold", fontFamily: "monospace" }}>&lt;Kubernetics/&gt;</span>
-            <span style={{ fontSize: "14px", fontFamily: "monospace" }}>[ DATA_LAKE_IO ]</span>
-            <span style={{ fontSize: "20px", fontWeight: 800 }}>
-              NEXUS<span style={{ color: "#06b6d4" }}>·</span>
-            </span>
-            <span style={{ fontSize: "22px", fontStyle: "italic", fontFamily: "serif" }}>VoidSystems</span>
-            <span style={{ fontSize: "14px", fontFamily: "monospace", border: "1px solid currentColor", padding: "4px 8px" }}>SYS_OPS</span>
-          </div>
+      {/* ── STATS ── */}
+      <div className="hero-stats">
+        <div className="hero-stat">
+          <div className="stat-n">&lt;&nbsp;2<span>min</span></div>
+          <div className="stat-l">mean time to recovery</div>
+        </div>
+        <div className="hero-stat">
+          <div className="stat-n">100<span className="green">%</span></div>
+          <div className="stat-l">drift auto-remediated</div>
+        </div>
+        <div className="hero-stat">
+          <div className="stat-n">$0<span>.003</span></div>
+          <div className="stat-l">per pipeline run</div>
+        </div>
+        <div className="hero-stat">
+          <div className="stat-n">∞</div>
+          <div className="stat-l">midnight alerts handled</div>
         </div>
       </div>
     </header>
