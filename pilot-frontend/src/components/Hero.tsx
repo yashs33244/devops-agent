@@ -247,17 +247,20 @@ export function Hero() {
         .hero-stats {
           width: 100%;
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          grid-template-columns: repeat(6, 1fr);
           gap: 1px;
           background: var(--line-dark);
           border-top: 1px solid var(--line-dark);
         }
-        @media (max-width: 700px) {
+        @media (max-width: 900px) {
+          .hero-stats { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 600px) {
           .hero-stats { grid-template-columns: repeat(2, 1fr); }
           .hero-wrap { padding: 48px 20px 60px; }
         }
         .hero-stat {
-          padding: 32px 5vw;
+          padding: 28px 24px;
           background: var(--bg-dark);
           display: flex;
           flex-direction: column;
@@ -265,19 +268,21 @@ export function Hero() {
         }
         .stat-n {
           font-family: "Instrument Serif", serif;
-          font-size: 2.6rem;
+          font-size: 2.2rem;
           line-height: 1;
           color: var(--text-on-dark);
           letter-spacing: -0.03em;
         }
-        .stat-n span { color: var(--accent); font-size: 1.6rem; }
+        .stat-n sup { color: var(--accent); font-size: 1.1rem; vertical-align: super; }
+        .stat-n sub { color: var(--accent); font-size: 1.1rem; }
         .stat-n .green { color: var(--good); }
+        .stat-n .dim { color: var(--text-on-dark-soft); font-size: 1.4rem; }
         .stat-l {
           font-family: "JetBrains Mono", monospace;
-          font-size: 11px;
+          font-size: 10px;
           color: var(--text-on-dark-soft);
           letter-spacing: 0.04em;
-          line-height: 1.5;
+          line-height: 1.55;
         }
       `}} />
 
@@ -328,20 +333,28 @@ export function Hero() {
       {/* ── STATS ── */}
       <div className="hero-stats">
         <div className="hero-stat">
-          <div className="stat-n">&lt;&nbsp;2<span>min</span></div>
-          <div className="stat-l">mean time to recovery</div>
+          <div className="stat-n">&lt;&nbsp;6<sub>min</sub></div>
+          <div className="stat-l">git push → live service<br/>full pipeline, zero manual steps</div>
         </div>
         <div className="hero-stat">
-          <div className="stat-n">100<span className="green">%</span></div>
-          <div className="stat-l">drift auto-remediated</div>
+          <div className="stat-n">~<span className="green">72</span><span className="green dim">%</span></div>
+          <div className="stat-l">avg compute cost cut<br/>KEDA scale-to-zero + Karpenter</div>
         </div>
         <div className="hero-stat">
-          <div className="stat-n">$0<span>.003</span></div>
-          <div className="stat-l">per pipeline run</div>
+          <div className="stat-n">10</div>
+          <div className="stat-l">pipeline steps automated<br/>Dockerfile → deploy → monitor</div>
         </div>
         <div className="hero-stat">
-          <div className="stat-n">∞</div>
-          <div className="stat-l">midnight alerts handled</div>
+          <div className="stat-n">6</div>
+          <div className="stat-l">languages auto-detected<br/>Node · Python · Go · Java · Rust · Ruby</div>
+        </div>
+        <div className="hero-stat">
+          <div className="stat-n">3</div>
+          <div className="stat-l">clouds supported<br/>AWS · Azure · GCP</div>
+        </div>
+        <div className="hero-stat">
+          <div className="stat-n"><span className="green">0</span></div>
+          <div className="stat-l">secrets in generated output<br/>OIDC + ESO, no static keys</div>
         </div>
       </div>
     </header>
