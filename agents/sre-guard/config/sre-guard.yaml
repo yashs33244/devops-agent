@@ -1,0 +1,41 @@
+poll_interval_seconds: 30
+api_port: 8888
+log_level: INFO
+slack_webhook_url: ""   # set SLACK_WEBHOOK_URL env var or fill here
+
+services:
+  - name: python-api
+    prometheus_url: http://prometheus:9090
+    namespace: default
+    health_url: http://python-api:8000/health
+    alert_rules:
+      - name: HighErrorRate
+        query: 'rate(http_requests_total{job="python-api",status=~"5.."}[5m])'
+        threshold: 0.05
+        comparison: gt
+        severity: critical
+        for_duration: 60
+      - name: HighLatency
+        query: 'histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="python-api"}[5m]))'
+        threshold: 1.0
+        comparison: gt
+        severity: warning
+        for_duration: 120
+      - name: PodDown
+        query: 'up{job="python-api"}'
+        threshold: 1.0
+        comparison: lt
+        severity: critical
+        for_duration: 30
+
+  - name: go-api
+    prometheus_url: http://prometheus:9090
+    namespace: default
+    health_url: http://go-api:8080/health
+    alert_rules:
+      - name: HighErrorRate
+        query: 'rate(http_requests_total{job="go-api",status=~"5.."}[5m])'
+        threshold: 0.05
+        comparison: gt
+        severity: critical
+        for_duration: 60
